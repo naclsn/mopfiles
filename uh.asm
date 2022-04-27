@@ -10,6 +10,8 @@
 %include "args.asm"
 
 section .data
+	panic_message:		db "Panic, exiting", 10
+	panic_message_len:	equ $-panic_message
 
 section .bss
 	fst:		resb STRUC_STAT_SIZE
@@ -31,9 +33,12 @@ _start:
 	mov	[brk], rax
 	call	debug_show_address
 
+	mov	rax, rsp
+	call	debug_show_address
+
 	; TODO: init stack with a first empty node (to brk, len 0)
 
-;uh_see_file:
+uh_see_file:
 	sys_stat [fn], fst
 
 	test	rax, rax
@@ -45,33 +50,44 @@ _start:
 	cmp	rax, ENOTDIR
 	jz	uh_edit_file
 
-	jmp uh_panic		; could not see file fsr
+	neg	rax
+	jmp	uh_panic	; could not see file
 
 uh_open_file:
 	sys_open [fn], O_RDONLY
-	cmp	rax, -1
-	jz	uh_panic	; could not open file fsr
+	test	rax, rax
+	js	uh_panic	; could not open file
 	mov	[fd], rax
 
-	sys_mmap [brk], [fst+st_size], PROT_READ, MAP_PRIVATE, [fd], 0
-	cmp	rax, -1
-	jz	uh_panic	; could not mmap file fsr
+	mov	rbx, [fst+st_size]
+	test	rbx, rbx
+	jz	uh_close_file	; if file has size 0 (cannot mmap)
+
+	; XXX: not sure good where it puts it with passing NULL...
+	;      (likely to put is on the stack apparently, should?)
+	sys_mmap 0, rbx, PROT_READ, MAP_PRIVATE, rax, 0
+	test	rax, rax
+	js	uh_panic	; could not mmap file
 	mov	[addr], rax
 
-	sys_close [fd]		; for now automatically close the fd jic
+uh_close_file:
+	sys_close [fd]		; for now automatically close the fd
 				; ignores errors on close, should panic?
 
 	; TODO: fill first node on stack with info and such
 
 	mov	rax, [addr]
 	call	debug_show_address
-	sys_write 2, [addr], 6	; FIXME: nothing, same on [brk], brainfried
+	sys_write 2, [addr], [fst+st_size]
 
 uh_edit_file:
 
-	sys_exit -1
+	sys_exit 0
 
 uh_panic:
-	sys_exit rax
+	neg	rax
+	mov	r10, rax
+	sys_write 2, panic_message, panic_message_len
+	sys_exit r10
 	ret
 

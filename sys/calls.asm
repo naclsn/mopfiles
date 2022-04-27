@@ -38,8 +38,8 @@
 %endmacro
 
 %macro sys_mmap 6 ; (addr, length, prot, flags, fd, offset)
-	mov	r8, %6
-	mov	r9, %5
+	mov	r9, %6
+	mov	r8, %5
 	mov	r10, %4
 	mov	rdx, %3
 	mov	rsi, %2
