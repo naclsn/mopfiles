@@ -24,7 +24,7 @@ section .bss
 ;   r10: k in argv[k]
 ;   r9: argv[k]
 ;   bx (when used): first 2 char at [r9]
-%macro args_parse 0
+%macro args_main 0
 	mov	r10, 1
 	; grab program name from args[0]
 	mov	r9, [rsp+r10*8]	; -> r9: args[0]
@@ -79,8 +79,8 @@ args_usage:
 	sys_write 2, usage_part_1, usage_part_1_len
 	sys_write 2, [arg0], [arg0_len]
 	sys_write 2, usage_part_2, usage_part_2_len
-	sys_exit 2
-	ret
+	sys_exit 22
+	jmp	_panic
 
 args_before_last:
 	inc	r10
@@ -93,11 +93,14 @@ args_last:
 	call	str_len	; -> rdx: len
 	mov	[fn_len], rdx
 
-	; TODO: move checking and opening file here
-	;       and when called with no specified file
-	;       it simply jumps to `args_done` below
-	;       (don't want to try and open a file named
-	;       "#scratch#" or something)
+	; XXX: move checking and opening file here
+	;      and when called with no specified file
+	;      it simply jumps to `args_done` below
+	;      (don't want to try and open a file named
+	;      "#scratch#" or something)
+	; for some obscure reason, for now that works
+	; as it does not seem to want to stat a file
+	; which name starts with '#'
 
 args_done:
 %endmacro

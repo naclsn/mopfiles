@@ -1,19 +1,27 @@
 #!/usr/bin/env sh
 
-a=${1%.asm}
-if [ -z $1 ] || [ '-h' = "$1" ] || [ "$a" = "$1" ] || ! [ -f "$1" ]
+b=${1:-uh.asm}
+a=${b%.asm}
+if [ '-r' = "$b" ]
     then
-        echo "Usage: $0 <file.asm> [-r <args>]"
-        exit 2
+        a=uh
+    else
+        if [ '-h' = "$b" ] || [ "$a" = "$b" ] || ! [ -f "$b" ]
+            then
+                echo "Usage: $0 [<file.asm>] [-r <args>]"
+                echo '  default file: ./uh.asm'
+                exit 2
+        fi
+        shift
 fi
 
-nasm -f elf64 $a.asm && ld -s -o bin/$a $a.o && rm $a.o || exit 1
+nasm -f elf64 "$a.asm" && ld -s -o "bin/$a" "$a.o" && rm "$a.o" || exit 1
 
-if [ '-r' = "$2" ]
+if [ '-r' = "$1" ]
     then
-        shift 2
+        shift
         echo "+ ./bin/$a $@"
-        ./bin/$a $@
+        "./bin/$a" $@
         echo "+ finished with code $?"
 fi
 
