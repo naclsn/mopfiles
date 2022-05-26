@@ -8,31 +8,31 @@
 %include "hlp/debug.asm"
 
 %include "args.asm"		; -> args_main
+%include "text.asm"		; -> text_main, ... tbc
 %include "file.asm"		; -> file_main
 
 section .data
 	panic_msg:		db "Panic, exiting", 10
 	panic_msg_len:		equ $-panic_msg
 
-section .bss
-	brk:		resq 1
-	addr:		resq 1
-
 section .text
 	global _start
 
 _start:
 	args_main		; -> [fn], [fn_len], ...tbc
+	; objs_main or something to inits the machines and such
+	text_main		; -> [txt], ...tbc
+	file_main		; [fn], [txt] -> [fst], [txt], ...tbc
 
-	sys_brk 0		; query brk (k? why there? why now?)
-	mov	[brk], rax	;           ((see for actual usage and
-				;           storage of user input))
-
-	; TODO: init stack with a first empty node (to NULL, len 0)
-	; probably will do without and just have [head] directly
-	; be NULL (0)
-
-	file_main		; [fn] -> [fst], [addr], ...tbc
+	; DEBUG: code below shows last 20 characters (does not check for size)
+	; TODO: change into using the [txt] mesh
+	;       when enough procedures to do so
+	mov	rax, [fma]
+	mov	rbx, [fst+st_size]
+	sub	rbx, 20
+	add	rax, rbx
+	debug_put_buffer rax, 20
+	debug_send
 
 	; DEBUG: printf("%s (%db)", [fn], [fst+st_size])
 	debug_put_buffer [fn], [fn_len]

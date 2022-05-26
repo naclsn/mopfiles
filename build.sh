@@ -1,5 +1,6 @@
 #!/usr/bin/env sh
 
+c=:
 b=${1:-uh.asm}
 a=${b%.asm}
 if [ '-r' = "$b" ]
@@ -14,13 +15,17 @@ if [ '-r' = "$b" ]
         fi
         [ 0 -eq $# ] || shift
 fi
-
-nasm -f elf64 "$a.asm" && ld -s -o "bin/$a" "$a.o" && rm "$a.o" || exit 1
-
 if [ '-r' = "$1" ]
     then
         shift
-        echo "+ ./bin/$a $@"
-        "./bin/$a" $@
-        echo "+ finished with code $?"
+        c="./bin/$a"
 fi
+
+set -ex
+nasm -f elf64 "$a.asm"
+ld -s -o "bin/$a" "$a.o"
+rm "$a.o"
+
+"$c" $@
+{ set +x; } 2>/dev/null
+echo + "# exit code: $?"

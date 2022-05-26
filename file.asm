@@ -6,6 +6,7 @@ section .bss
 	fd:		resq 1
 	fma:		resq 1	; TODO: figure out
 
+; TODO: write what does
 %macro file_main 0
 	sys_stat [fn], fst
 
@@ -38,17 +39,10 @@ file_open:
 
 file_close:
 	sys_close [fd]		; for now automatically close the fd
-				; ignores errors on close, should panic?
 
-	; TODO: fill first node on stack with info and such
-
-	; DEBUG: code below shows last 20 characters (does not check for size tho)
 	mov	rax, [fma]
-	mov	rbx, [fst+st_size]
-	sub	rbx, 20
-	add	rax, rbx
-	debug_put_buffer rax, 20
-	debug_send
+	mov	rcx, [fst+st_size]
+	call	text_init	; fill first node on stack
 
 file_done:
 %endmacro

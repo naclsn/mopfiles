@@ -24,6 +24,7 @@ section .bss
 ;   r10: k in argv[k]
 ;   r9: argv[k]
 ;   bx (when used): first 2 char at [r9]
+; TODO: write what does (better)
 %macro args_main 0
 	mov	r10, 1
 	; grab program name from args[0]
