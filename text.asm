@@ -1,32 +1,64 @@
+; create the data structure (a `mesh`) which enables operations on text:
+; * init: initialize the data structure to only contain the provided
+;         text_init (rax: char*, rcx: len) -> range
+; * edit: override a section of text, the provided source
+;         is not duplicated and hence should not be touched
+;         text_edit (range, rax: char*, rcx: len) -> range
+; * undo: find latest edit in range
+;         text_undo (range) -> range
+; * redo: find ealriest undo in range
+;         text_redo (range) -> range
+; * iter: iterate through the text as characters and apply
+;         arbitrary procedure
+;         text_iter (rax: anchor, rdx: direction, rex: proc to call)
+;                   -> rax: anchor, rcx: counter
+;         NOTE: this procedure will likely be reworked into
+;               something like a macro that simply fetches next
+;               so the loop would essentially be done by caller
+;
+; to specify a location in the structure, it is necessary to use
+; the provided `anchor` struc
+;
+; a 'range' is always specified with `r11` and `r12` holding
+; pointers to `anchor` struc instances
+;
+; outside of the `anchor` struc data type, the described procedures
+; and the presence of a [txt] memory cell, the rest is internal and
+; implementation details
+;
+; XXX: for now, none of this differenciates between a character and
+;      a byte (only handling of ASCII), but this should be chaned
+;      to handle basic UTF-8 (if possible)
+;      ((also this is application wide))
+
 %ifndef TEXT_ASM
 %define TEXT_ASM
 
 struc node
-	nd_prev:	resb 8 ; : node*
-	nd_next:	resb 8 ; : node*
-	nd_above:	resb 8 ; : chain*
-	nd_below:	resb 8 ; : chain*
-	nd_a:		resb 8 ; : char*
-	nd_b:		resb 8 ; : char*
+	nd_prev:	resq 1 ; : node*
+	nd_next:	resq 1 ; : node*
+	nd_above:	resq 1 ; : chain*
+	nd_below:	resq 1 ; : chain*
+	nd_a:		resq 1 ; : char*
+	nd_b:		resq 1 ; : char*
 endstruc
 
 struc chain
-	ch_node1:	resb 8 ; : node*
-	ch_node2:	resb 8 ; : node*
+	ch_node1:	resq 1 ; : node*
+	ch_node2:	resq 1 ; : node*
 endstruc
 
 struc mesh
 	ms_chain:	resb chain_size
-	ms_stack_bot:	resb 8 ; : node*
-	ms_stack_top:	resb 8 ; : node*
-	ms_sources:	resb 8 ; : char*
-	ms_sources_c:	resb 8 ; : char*
+	ms_stack_bot:	resq 1 ; : node*
+	ms_stack_top:	resq 1 ; : node*
+	ms_sources:	resq 1 ; : char*
+	ms_sources_c:	resq 1 ; : char*
 endstruc
 
 section .bss
 	txt:		resb mesh_size
 
-; TODO: write what does
 %macro text_main 0
 	sys_brk 0		; query brk
 	; sources are on the traditional heap
@@ -56,7 +88,7 @@ section .bss
 
 	jmp	text_done
 
-text_init:			; used to fixup when loading file
+text_init:
 	mov	[txt+ms_chain+ch_node1+nd_a], rax
 	add	rax, rcx
 	mov	[txt+ms_chain+ch_node1+nd_b], rax

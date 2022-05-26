@@ -27,7 +27,7 @@ _start:
 	; DEBUG: code below shows last 20 characters (does not check for size)
 	; TODO: change into using the [txt] mesh
 	;       when enough procedures to do so
-	mov	rax, [fma]
+	mov	rax, [fma]	; (yes, this /is/ the reason it segfaults on ENOENTs)
 	mov	rbx, [fst+st_size]
 	sub	rbx, 20
 	add	rax, rbx

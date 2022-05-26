@@ -20,12 +20,13 @@ if [ '-r' = "$1" ]
         shift
         c="./bin/$a"
 fi
+[ -d bin/ ] || mkdir bin/
 
 set -ex
 nasm -f elf64 "$a.asm"
 ld -s -o "bin/$a" "$a.o"
 rm "$a.o"
 
+{ set +e; } 2>/dev/null
 "$c" $@
-{ set +x; } 2>/dev/null
-echo + "# exit code: $?"
+{ echo + "# exit code: $?"; } 2>/dev/null

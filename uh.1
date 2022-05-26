@@ -1,0 +1,62 @@
+.TH UH 1
+
+.SH NAME
+uh \- The uh text editor
+
+.SH SYNOPSIS
+.B uh
+[...]
+[[\fB\-\-\fR] \fI<filename>\fR]
+
+.SH DESCRIPTION
+.B uh
+is a simple terminal text editor.
+It is not line oriented, but uses the concept of 'focus'.
+A 'focus' is a pice of text within the document as follow:
+
+    if test -f ~/.uhrc; then echo this is not a thing; fi; exit 1
+                        ____                           __
+          outer         |              inner            |  outer
+                        a                               b
+
+The borders of a focus between inner and outer are determined
+from a given list of matching pairs. For examle in this case,
+the matching pairs used to delimit the current focus can be written:
+
+    "then", "fi
+
+When starting, uh loads a list of pairs (for now these are hard coded,
+but further down it would use eg .uhrc to provide pairs based on
+recognised or specified file type).
+
+Pairs are specifically manipulated in a list and not as set; this is
+because ordering matters in determining which pair should be used
+to find a focus in the file. (for now it was decided that) Earlier
+defined pairs have priority. A pair cannot be used to set the focus
+if a pair with higher priority still has chance of matching.
+
+(eventualy) Pairs can be defined recursively, for example this
+may be defined for an HTML-like language:
+
+    "</", ">"
+    "<", ">"
+    \1, \2    (syntax and behavior to be decided)
+
+.SH OPTIONS
+.TP
+.BR \-h ", " \-\-help
+Show the quick help.
+
+.TP
+.BR \-V ", " \-\-version
+Print the version successfully.
+
+.TP
+.BR \-R
+Start in readonly mode.
+Modifications are not allowed.
+
+.TP
+.BR \-w \fI<filename>\fR
+Write what was typed durring the session into the file.
+(is the file overriden? appended to?)
