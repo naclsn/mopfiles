@@ -16,8 +16,6 @@ struc stat
 	st_atime:	resb 8 ; offset: 72
 	st_mtime:	resb 8 ; offset: 88
 	st_ctime:	resb 8 ; offset: 104
-	STRUC_STAT_SIZE:resb 0
 endstruc
 
 %endif ; STRUCS_ASM
-

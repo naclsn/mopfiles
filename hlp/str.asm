@@ -8,7 +8,7 @@ str_len:
 	not	ecx
 	xor	al, al
 	cld
-repne   scasb
+repne	scasb
 	not	ecx
 	lea	rdx, [rcx-1]
 	ret
@@ -18,5 +18,9 @@ str_cmp:
 repe	cmpsb
 	ret
 
-%endif ; STR_ASM
+; rsi: src, rdi: dest, rcx: len
+str_mov:
+rep	movsb
+	ret
 
+%endif ; STR_ASM

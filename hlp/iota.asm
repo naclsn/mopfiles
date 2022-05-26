@@ -41,4 +41,3 @@ iota_zero:
 	ret
 
 %endif ; IOTA_ASM
-

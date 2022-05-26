@@ -2,7 +2,7 @@
 %define FILE_ASM
 
 section .bss
-	fst:		resb STRUC_STAT_SIZE
+	fst:		resb stat_size
 	fd:		resq 1
 	fma:		resq 1	; TODO: figure out
 
@@ -42,15 +42,15 @@ file_close:
 
 	; TODO: fill first node on stack with info and such
 
-	; DEBUG: code below shows last 20 characters (doenst check for size)
+	; DEBUG: code below shows last 20 characters (does not check for size tho)
 	mov	rax, [fma]
 	mov	rbx, [fst+st_size]
 	sub	rbx, 20
 	add	rax, rbx
-	sys_write 2, rax, 20
+	debug_put_buffer rax, 20
+	debug_send
 
 file_done:
 %endmacro
 
 %endif ; FILE_ASM
-

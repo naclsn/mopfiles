@@ -12,7 +12,7 @@ if [ '-r' = "$b" ]
                 echo '  default file: ./uh.asm'
                 exit 2
         fi
-        shift
+        [ 0 -eq $# ] || shift
 fi
 
 nasm -f elf64 "$a.asm" && ld -s -o "bin/$a" "$a.o" && rm "$a.o" || exit 1
@@ -24,4 +24,3 @@ if [ '-r' = "$1" ]
         "./bin/$a" $@
         echo "+ finished with code $?"
 fi
-

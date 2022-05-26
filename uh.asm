@@ -35,19 +35,11 @@ _start:
 	file_main		; [fn] -> [fst], [addr], ...tbc
 
 	; DEBUG: printf("%s (%db)", [fn], [fst+st_size])
-	sys_write 2, [fn], [fn_len]
-	mov	rax, ' '
-	call	debug_put_char
-	mov	rax, '('
-	call	debug_put_char
-	mov	rax, [fst+st_size]
-	call	debug_put_number
-	mov	rax, ')'
-	call	debug_put_char
-	mov	rax, 10
-	call	debug_put_char
-	; yes, character by character...
-	; ((all that begs the need for at least a shallow 'printf', no?))
+	debug_put_buffer [fn], [fn_len]
+	debug_put_bytes " ("
+	debug_put_number [fst+st_size]
+	debug_put_bytes {')', 10}
+	debug_send
 
 	sys_exit 0
 	mov	rax, 1
@@ -58,4 +50,3 @@ _panic:
 	sys_write 2, panic_msg, panic_msg_len
 	sys_exit r10
 	ret
-

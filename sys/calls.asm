@@ -69,4 +69,3 @@
 %endmacro
 
 %endif ; CALLS_ASM
-

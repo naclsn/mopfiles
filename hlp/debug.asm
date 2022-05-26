@@ -1,76 +1,87 @@
 %ifndef DEBUG_ASM
 %define DEBUG_ASM
 
-; yes, all of that is very bad and inefficient..
-; TODO: a form of shallow 'printf'
-; in the mean time:
-;   put: only the thing
-;   show: the thing and a new line
+; @usage: (note: these are macros)
+;	debug_put_[]	; accumulates in the debug_buf
+;	debug_send
+;
+; for the _put_[] procs:
+;	rax: what to put
+
+%macro debug_send 0
+	mov	rax, [debug_buf_c]
+	sub	rax, debug_buf
+	sys_write 2, debug_buf, rax
+	mov	qword[debug_buf_c], debug_buf
+%endmacro
+
+%macro debug_put_byte 1
+	mov	al, %1
+	mov	rsi, [debug_buf_c]
+	mov	byte[rsi], al
+	inc	rsi
+	mov	[debug_buf_c], rsi
+%endmacro
+
+%macro debug_put_bytes 1
+section	.data
+	%%buf	db %1
+	%%len	equ $-%%buf
+section .text
+	debug_put_buffer %%buf, %%len
+%endmacro
+
+%macro debug_put_buffer 2
+	mov	rsi, %1
+	mov	rdi, [debug_buf_c]
+	mov	rcx, %2
+	add	[debug_buf_c], rcx
+	call	str_mov
+%endmacro
+
+%macro debug_put_address 1
+	mov	rax, %1
+	call	__debug_put_address
+%endmacro
+
+%macro debug_put_number 1
+	mov	rax, %1
+	call	__debug_put_number
+%endmacro
 
 section .bss
 	debug_BUFSIZE		equ 1024
 	debug_buf		resb debug_BUFSIZE
 
+section .data
+	debug_buf_c		dq debug_buf
+
 section .text
-; rax: value
-debug_put_address:
-	mov	rsi, debug_buf
-	mov	word[rsi], '0'
-	inc	rsi
-	mov	word[rsi], 'x'
-	inc	rsi
+__debug_put_address:
+	push	rax
+	; debug_put_bytes "0x"
+	debug_put_byte '0'
+	debug_put_byte 'x'
 
+	pop	rax
 	mov	rdi, 16		; base (hexadecimal)
+	mov	rsi, [debug_buf_c]
 	call	iota		; -> rdx: len
 
-	mov	rax, 1		; write
-	mov	rdi, 2		; stderr
-	mov	rsi, debug_buf
-	syscall
-
+	mov	rax, [debug_buf_c]
+	add	rax, rdx
+	mov	[debug_buf_c], rax
 	ret
 
-; rax: value
-debug_put_number:
-	mov	rsi, debug_buf
-
+__debug_put_number:
+	;(mov	rax, rax)
 	mov	rdi, 10		; base (decimal)
+	mov	rsi, [debug_buf_c]
 	call	iota		; -> rdx: len
 
-	mov	rax, 1		; write
-	mov	rdi, 2		; stderr
-	mov	rsi, debug_buf
-	syscall
-
-	ret
-
-; rax: value
-debug_put_char:
-	mov	[debug_buf], al
-
-	mov	rax, 1		; write
-	mov	rdi, 2		; stderr
-	mov	rdx, 1
-	mov	rsi, debug_buf
-	syscall
-
-	ret
-
-; rax: value
-debug_show_address:
-	call	debug_put_address
-	mov	rax, 10
-	call	debug_put_char
-
-	ret
-
-; rax: value
-debug_show_number:
-	call	debug_put_number
-	mov	rax, 10
-	call	debug_put_char
-
+	mov	rax, [debug_buf_c]
+	add	rax, rdx
+	mov	[debug_buf_c], rax
 	ret
 
 %endif ; DEBUG_ASM
-
