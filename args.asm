@@ -43,6 +43,12 @@ section .bss
 ;   r9: argv[k]
 ;   bx (when used): first 2 char at [r9]
 %macro args_main 0
+	jmp	args_start
+args_done:
+%endmacro
+
+section .text
+args_start:
 	mov	r10, 1
 	; grab program name from args[0]
 	mov	rdi, [rsp+r10*8]; -> rdi: args[0]
@@ -137,7 +143,7 @@ args_last:
 	; as it does not seem to want to stat a file
 	; which name starts with '#'
 
-args_done:
-%endmacro
+	jmp	args_done
+; args_done:
 
 %endif ; ARGS_ASM

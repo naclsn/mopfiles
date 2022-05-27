@@ -8,13 +8,9 @@
 ;         text_undo (range) -> range
 ; * redo: find ealriest undo in range
 ;         text_redo (range) -> range
-; * iter: iterate through the text as characters and apply
-;         arbitrary procedure
-;         text_iter (rax: anchor, rdx: direction, rex: proc to call)
-;                   -> rax: anchor, rcx: counter
-;         NOTE: this procedure will likely be reworked into
-;               something like a macro that simply fetches next
-;               so the loop would essentially be done by caller
+; * iter: get the characters at `anchor` given by rax, then advance it
+;         in the direction given by rdx
+;         text_iter (rax: anchor*, rdx: direction) -> rax: anchor*, rcx: len
 ;
 ; to specify a location in the structure, it is necessary to use
 ; the provided `anchor` struc
@@ -40,7 +36,7 @@ struc node
 	nd_above:	resq 1 ; : chain*
 	nd_below:	resq 1 ; : chain*
 	nd_a:		resq 1 ; : char*
-	nd_b:		resq 1 ; : char*
+	nd_b:		resq 1 ; : char* (note: inclusive too)
 endstruc
 
 struc chain
@@ -56,10 +52,21 @@ struc mesh
 	ms_sources_c:	resq 1 ; : char*
 endstruc
 
+struc anchor
+	an_node:	resq 1
+	an_at:		resq 1 ; : (technically) char*
+endstruc
+
 section .bss
 	txt:		resb mesh_size
 
 %macro text_main 0
+	jmp	text_start
+text_done:
+%endmacro
+
+section .text
+text_start:
 	sys_brk 0		; query brk
 	; sources are on the traditional heap
 	mov	[txt+ms_sources], rax
@@ -82,19 +89,62 @@ section .bss
 	mov	[txt+ms_chain+ch_node2], rax
 
 	; move stack top
-	add	rax, node_size
+	sub	rax, node_size
 	mov	[txt+ms_stack_top], rax
 	mov	rsp, rax
 
 	jmp	text_done
 
+; rax: char*, rcx: length
 text_init:
-	mov	[txt+ms_chain+ch_node1+nd_a], rax
+	; XXX: should completely init, ie. single node and stack_top/bot etc...
+	mov	r9, [txt+ms_chain+ch_node1]
+	mov	[r9+nd_a], rax
 	add	rax, rcx
-	mov	[txt+ms_chain+ch_node1+nd_b], rax
+	mov	[r9+nd_b], rax
 	ret
 
-text_done:
-%endmacro
+; rax: anchor*, rdx: direction -> rcx: length
+;   push	r9		; curr_node
+text_iter:
+	mov	r9, [rax+an_node]
+
+	; such invalid anchor marks the end of iteration
+	test	r9, r9
+	jnz	_text_iter_proceed
+	xor	rcx, rcx
+	ret
+
+_text_iter_proceed:
+	mov	rcx, [rax+an_at]
+
+	cmp	dl, 0
+	jc	_text_iter_backward
+
+_text_iter_forward:
+	sub	rcx, [r9+nd_b]
+	neg	rcx
+
+	; move anchor to next node (even if none)
+	mov	r9, [r9+nd_next]
+	mov	[rax+an_node], r9
+	mov	r9, [r9+nd_a]
+	mov	[rax+an_at], r9
+
+	ret
+
+_text_iter_backward:
+	sub	rcx, [r9+nd_a]
+
+	; move anchor to prev node (even if none)
+	mov	r9, [r9+nd_prev]
+	mov	[rax+an_node], r9
+	mov	r9, [r9+nd_a]
+	mov	[rax+an_at], r9
+
+	ret
+
+	jmp	text_done
+; text_done:
 
 %endif ; TEXT_ASM
