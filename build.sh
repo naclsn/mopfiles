@@ -25,7 +25,7 @@ fi
 [ -d bin/ ] || mkdir bin/
 
 set -ex
-if [ -z "$d" ]
+if { [ -z "$d" ]; } 2>/dev/null
     then
         # release build
         nasm -f elf64 -o "bin/$a.o" "$a.asm"

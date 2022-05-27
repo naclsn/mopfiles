@@ -10,7 +10,7 @@
 ;         text_redo (range) -> range
 ; * iter: get the characters at `anchor` given by rax, then advance it
 ;         in the direction given by rdx
-;         text_iter (rax: anchor*, rdx: direction) -> rax: anchor*, rcx: len
+;         text_iter (rax: anchor*, rdx: direction) -> rax, rcx: len
 ;
 ; to specify a location in the structure, it is necessary to use
 ; the provided `anchor` struc
@@ -18,9 +18,14 @@
 ; a 'range' is always specified with `r11` and `r12` holding
 ; pointers to `anchor` struc instances
 ;
-; outside of the `anchor` struc data type, the described procedures
-; and the presence of a [txt] memory cell, the rest is internal and
+; outside of the `anchor` struc data type, the rest is internal and
 ; implementation details
+;
+; [txt] can be tested for being null (probably)
+; the [txt1] anchor always points at the very beginning
+; the [txt2] anchor always points at the very end
+; YYY: (make sure not to change their values, always make a copy before
+;      eg text_iter)
 ;
 ; XXX: for now, none of this differenciates between a character and
 ;      a byte (only handling of ASCII), but this should be chaned
@@ -54,11 +59,13 @@ endstruc
 
 struc anchor
 	an_node:	resq 1
-	an_at:		resq 1 ; : (technically) char*
+	an_at:		resq 1 ; : char*
 endstruc
 
 section .bss
 	txt:		resb mesh_size
+	txt1:		resb anchor_size
+	txt2:		resb anchor_size
 
 %macro text_main 0
 	jmp	text_start
@@ -97,11 +104,23 @@ text_start:
 
 ; rax: char*, rcx: length
 text_init:
-	; XXX: should completely init, ie. single node and stack_top/bot etc...
-	mov	r9, [txt+ms_chain+ch_node1]
-	mov	[r9+nd_a], rax
+	; NOTE: does not completely init, only changes the first node's source
+	mov	r11, [txt+ms_chain+ch_node1]
+	mov	[r11+nd_a], rax
 	add	rax, rcx
-	mov	[r9+nd_b], rax
+	mov	[r11+nd_b], rax
+
+	mov	r12, [txt+ms_chain+ch_node2]
+
+_text_update_ends:
+	mov	[txt1+an_node], r11
+	mov	rax, [r11+nd_a]
+	mov	[txt1+an_at], rax
+
+	mov	[txt2+an_node], r12
+	mov	rax, [r12+nd_b]
+	mov	[txt2+an_at], rax
+
 	ret
 
 ; rax: anchor*, rdx: direction -> rcx: length
@@ -128,6 +147,8 @@ _text_iter_forward:
 	; move anchor to next node (even if none)
 	mov	r9, [r9+nd_next]
 	mov	[rax+an_node], r9
+	test	r9, r9
+	jz	_text_iter_ret
 	mov	r9, [r9+nd_a]
 	mov	[rax+an_at], r9
 
@@ -139,9 +160,12 @@ _text_iter_backward:
 	; move anchor to prev node (even if none)
 	mov	r9, [r9+nd_prev]
 	mov	[rax+an_node], r9
-	mov	r9, [r9+nd_a]
+	test	r9, r9
+	jz	_text_iter_ret
+	mov	r9, [r9+nd_b]
 	mov	[rax+an_at], r9
 
+_text_iter_ret:
 	ret
 
 	jmp	text_done

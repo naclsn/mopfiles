@@ -15,6 +15,9 @@ section .data
 	panic_msg:		db "Panic, exiting", 10
 	panic_msg_len:		equ $-panic_msg
 
+section .bss
+	tmp_anchor:		resb anchor_size
+
 section .text
 	global _start
 
@@ -24,15 +27,32 @@ _start:
 	text_main		; -> [txt], ...tbc
 	file_main		; [fn], [txt] -> [fst], [txt], ...tbc
 
-	; DEBUG: code below shows last 20 characters (does not check for size)
-	; TODO: change into using the [txt] mesh
-	;       when enough procedures to do so
-	mov	rax, [fma]	; (yes, this /is/ the reason it segfaults on ENOENTs)
-	mov	rbx, [fst+st_size]
-	sub	rbx, 20
-	add	rax, rbx
-	debug_put_buffer rax, 20
+	; DEBUG: code below shows last 20 characters
+	lea	rsi, [txt1]
+	lea	rdi, [tmp_anchor]
+	mov	rcx, anchor_size
+	call	str_mov		; weird attempt at copying a struc
+
+	mov	rax, tmp_anchor
+	mov	rbx, [rax+an_at]
+	mov	dl, 1
+	call	text_iter	; -> rcx: length
+
+	sub	rcx, 20
+	jc	__less_than_20
+	add	rbx, rcx
+	debug_put_buffer rbx, 20
+__less_than_20:
+	add	rcx, 20
+	debug_put_buffer rbx, rcx
 	debug_send
+
+	;mov	rax, [fma]
+	;mov	rbx, [fst+st_size]
+	;sub	rbx, 20
+	;add	rax, rbx
+	;debug_put_buffer rax, 20
+	;debug_send
 
 	; DEBUG: printf("%s (%db)", [fn], [fst+st_size])
 	debug_put_buffer [fn], [fn_len]
