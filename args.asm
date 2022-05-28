@@ -4,6 +4,9 @@
 ;        note that is the only argument which does
 ;        not get a name starting with `arg_`
 ;
+; the stack pointer is left as it was;
+; this is important for exec_main which comes right after
+;
 ; NOTE: aborts on unknown argument, may not want that...
 
 %ifndef ARGS_ASM
@@ -31,23 +34,24 @@ section .data
 	unk_arg_part_2_len:	equ $-unk_arg_part_2
 
 	fn:			dq $+8
-				db "#scratch#"
-	fn_len:			dq $-fn
+				db "#scratch#", 0
+	fn_len:			dq $-fn-8
 
 section .bss
 	arg0:			resq 1
 	arg0_len:		resq 1
 
-; @rem [rsp]: argc, [rsp+8]: args[0]
-;   r10: k in argv[k]
-;   r9: argv[k]
-;   bx (when used): first 2 char at [r9]
 %macro args_main 0
 	jmp	args_start
 args_done:
 %endmacro
 
 section .text
+; @rem [rsp]: argc, [rsp+8]: args[0]
+;   r10: k in argv[k]
+;   r9: argv[k]
+;   ebx (when used): first 4 char at [r9]
+; YYY: out of flemme, only checks the 4 first characters
 args_start:
 	mov	r10, 1
 	; grab program name from args[0]
@@ -134,6 +138,8 @@ args_last:
 	call	str_len		; -> rdx: len
 	mov	[fn_len], rdx
 
+	; YYY: not sure the following is still relevant
+	;      so please check it out soon enough, thanks
 	; XXX: move checking and opening file here
 	;      and when called with no specified file
 	;      it simply jumps to `args_done` below

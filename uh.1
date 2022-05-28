@@ -60,3 +60,13 @@ Modifications are not allowed.
 .BR \-w \fI<filename>\fR
 Write what was typed durring the session into the file.
 (is the file overriden? appended to?)
+
+.SH NOTES
+If a \fBHOME\fR environment variable is present,
+\fI$HOME/.config/uh\fR is used in a few ways:
+.IP \[bu] 2
+configuration is read from (all that tbd) (eg. matching pairs for given filename/firstline patern, ...)
+.IP \[bu] 2
+it is added to the lookup paths for ! commands
+.P
+Otherwise, tries \fI$HOME/.config/uh\fR.

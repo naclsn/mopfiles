@@ -84,6 +84,7 @@ text_start:
 	mov	[txt+ms_stack_bot], rax
 
 	; make new node atop stack
+	sub	rax, node_size
 	mov	qword[rax+nd_prev], 0
 	mov	qword[rax+nd_next], 0
 	mov	qword[rax+nd_above], 0
@@ -96,7 +97,6 @@ text_start:
 	mov	[txt+ms_chain+ch_node2], rax
 
 	; move stack top
-	sub	rax, node_size
 	mov	[txt+ms_stack_top], rax
 	mov	rsp, rax
 
