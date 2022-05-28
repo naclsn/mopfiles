@@ -50,7 +50,7 @@ section .text
 %endmacro
 
 section .bss
-	debug_BUFSIZE		equ 1024
+	debug_BUFSIZE		equ 8192
 	debug_buf		resb debug_BUFSIZE
 
 section .data

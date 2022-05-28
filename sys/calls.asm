@@ -62,6 +62,14 @@
 	syscall
 %endmacro
 
+%macro sys_execve 3 ; (filename, *argv, *envp)
+	mov	rdx, %3
+	mov	rsi, %2
+	mov	rdi, %1
+	mov	rax, 59
+	syscall
+%endmacro
+
 %macro sys_exit 1 ; (status)
 	mov	rdi, %1
 	mov	rax, 60
