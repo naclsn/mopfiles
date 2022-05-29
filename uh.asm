@@ -28,6 +28,25 @@ _start:
 	file_main		; [fn], [txt] -> [fst], [txt], ...tbc
 	view_main
 
+	; DEBUG: print path entries
+	debug_put_bytes {"found PATH entries:", 10}
+	debug_send
+	xor	r15, r15
+__path_print_next:
+	mov	rbx, [exmb+mb_paths+(r15+1)*8]
+	test	rbx, rbx	; -> ZF: end is null pointer (should stop)
+	jz	__path_print_done
+	mov	rax, [exmb+mb_paths+(r15+0)*8]
+	sub	rbx, rax
+	inc	r15
+	dec	rbx		; -> ZF: str is empty string (should skip)
+	jz	__path_print_next
+	debug_put_buffer rax, rbx
+	debug_put_byte 10
+	debug_send
+	jmp	__path_print_next
+__path_print_done:
+
 	; DEBUG: print config_dir
 	debug_put_bytes "config_dir: "
 	mov	rdi, [config_dir]
@@ -39,7 +58,6 @@ _start:
 	; DEBUG: ask input and execve it (no forking yet)
 	sys_read 0, exmb+mb_buf, minibuf_cap ; -> rax: length
 	mov	[exmb+mb_buf+rax], byte 0
-
 	call	exec_parse
 	call	exec_print ; *-*
 	call	exec_fork

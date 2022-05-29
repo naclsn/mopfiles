@@ -12,18 +12,20 @@
 ; NOTE: the minibufer is designed to hold enough information
 ;       to facilitate a syscall to execve (so it is probably
 ;       not the right struc to use if for a simple buffer)
-	minibuf_cap:	equ 4096
+	minibuf_cap:	equ 256
+	minibuf_hist_cap:equ 32
 struc minibuf
-	mb_gap:		resb minibuf_cap/8 ; YYY: idk, just don't have dumb long path in your PATH env var
+	mb_gap:		resb 64 ; gap is used to fit eg /usr/bin
 	mb_buf:		resb minibuf_cap
-	mb_back:	resb minibuf_cap
-	mb_args:	resq 32 ; char* (each) ; YYY: one can only say so many args before becoming a pirate...
-	mb_paths:	resq 32 ; char* (each) ; YYY: one can only have so many paths before being lost...
+	mb_args:	resq 32 ; char* (each) (\0 terminated)
+	mb_paths:	resq 32 ; char* (each) (may contain empty string)
 	mb_envp:	resq 1 ; char* []
+	mb_hist_buf:	resb minibuf_cap*minibuf_hist_cap
+	mb_hist_ents:	resq minibuf_hist_cap
 endstruc
 
 section .data
-	config_dir_gap:	times 32 db 0 ; YYY: one's way home can only be so long before they sleep at work
+	config_dir_gap:	times 32 db 0 ; gap is used to fit /home/...
 			db "/"
 	config_dir_s:	db ".config/uh", 0
 	config_dir:	dq config_dir_s
@@ -44,10 +46,6 @@ section .text
 ;   ebx: first 4 char at [r9]
 ; YYY: out of flemme, only checks the 4 first characters
 exec_start:
-	; DOING:
-	; get HOME and set first path thingy
-	; get PATH and parse it into exmb.path
-
 	mov	r10, [rsp]	; -> argc
 	; +16 is to skip the null past argv
 	lea	r9, [rsp+r10*8+16]
@@ -65,6 +63,7 @@ __exec_env_next:
 	; HOME[=]
 	cmp	ebx, 'HOME'
 	jnz	__exec_env_not_HOME
+	; TODO: check for the '='
 	add	r9, 5		; skip 'HOME='
 	mov	rdi, r9
 	call	str_len		; -> rdx
@@ -80,7 +79,40 @@ __exec_env_not_HOME:
 	; PATH[=]
 	cmp	ebx, 'PATH'
 	jnz	__exec_env_not_PATH
-	; *-*
+	; TODO: check for the '='
+	add	r9, 5		; skip 'PATH='
+	xor	r11, r11	; index in exmb.paths
+	mov	rdi, r9
+	call	str_len		; -> rdx
+	push	rdx		; push PATH length
+__exec_env_path_next:
+	pop	rcx		; get leftover lenght to be scanned
+	mov	rbx, rcx	; save it to be substracted from later
+	mov	al, ':'
+	mov	rdi, r9
+	call	str_ch		; length to next ':' or end of PATH
+	;cmp	[r9+rdx-1], '\'
+	;jz	-3		; TODO: "\:" is part of the name
+	mov	[exmb+mb_paths+r11*8], r9
+	inc	r11
+	inc	rdx		; include the ':'
+	sub	rbx, rdx	; remove until ':' from leftover
+	jz	__exec_env_path_done
+	push	rbx		; push new leftover
+	add	r9, rdx		; move r9 past ':'
+	jmp	__exec_env_path_next
+__exec_env_path_done:
+	; append an empty string after last (used to compute length of last)
+	lea	r9, [r9+rdx+1]	; move r9 past \0
+	mov	bl, [r9-2]	; could still be ':' if was trailing
+	cmp	bl, ':'		; really is \0, str_ch will have stopped right before
+	jnz	__exec_env_path_was0
+	dec	r9		; if not, str_ch will have stopped on it; do not include this ':'
+__exec_env_path_was0:
+	mov	[exmb+mb_paths+r11*8], r9
+	; append a null pointer to mark the end of the array
+	inc	r11
+	mov	qword[exmb+mb_paths+r11*8], 0
 	jmp	__exec_env_next
 __exec_env_not_PATH:
 
@@ -90,7 +122,7 @@ __exec_env_not_PATH:
 exec_parse:
 	mov	rsi, exmb+mb_buf-1
 	mov	rdi, exmb+mb_args
-	mov	r10, exmb+mb_back
+	mov	r10, exmb+mb_hist_buf ; TODO
 	; bl (and bh): 0 blank, 1 char, 2/3 quoted (simple/double)
 	xor	bl, bl
 __exec_parse_next_char:
@@ -199,7 +231,7 @@ __exec_print_args:
 	jnc	__exec_print_args
 
 	debug_put_bytes "copy (exmb.back): #"
-	mov	rdi, exmb+mb_back
+	mov	rdi, exmb+mb_hist_buf
 	push	rdi
 	call	str_len		; -> rdx: length
 	pop	rdi

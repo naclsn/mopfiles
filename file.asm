@@ -22,6 +22,9 @@ file_done:
 
 section .text
 file_start:
+	cmp	qword[fn], fn_default
+	jz	file_none	; skip if no file given
+
 	sys_stat [fn], fst
 
 	test	rax, rax

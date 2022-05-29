@@ -34,7 +34,7 @@ section .data
 	unk_arg_part_2_len:	equ $-unk_arg_part_2
 
 	fn:			dq $+8
-				db "#scratch#", 0
+	fn_default:		db "#scratch#", 0
 	fn_len:			dq $-fn-8
 
 section .bss
@@ -137,17 +137,6 @@ args_last:
 	mov	[fn], rdi
 	call	str_len		; -> rdx: len
 	mov	[fn_len], rdx
-
-	; YYY: not sure the following is still relevant
-	;      so please check it out soon enough, thanks
-	; XXX: move checking and opening file here
-	;      and when called with no specified file
-	;      it simply jumps to `args_done` below
-	;      (don't want to try and open a file named
-	;      "#scratch#" or something)
-	; for some obscure reason, for now that works
-	; as it does not seem to want to stat a file
-	; which name starts with '#'
 
 	jmp	args_done
 ; args_done:
