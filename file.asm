@@ -1,5 +1,5 @@
 ; given the name of the edited file in [fn], it will load said
-; load said file in memory (mmap, XXX: may need fallback) and
+; load said file in memory (mmap, XXX: needs fallback?) and
 ; init the text data structre [txt] (which should already exist)
 ;
 ; the following are made available and accurate:
@@ -13,7 +13,7 @@
 section .bss
 	fst:		resb stat_size
 	fd:		resq 1
-	fma:		resq 1	; TODO: figure out
+	fma:		resq 1
 
 %macro file_main 0
 	jmp	file_start

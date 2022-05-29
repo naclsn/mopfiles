@@ -242,14 +242,81 @@ __exec_print_args:
 	ret
 
 exec_fork:
-	; TODO/REM:
+	xor	r10, r10	; index into exmb.paths
+
 	; if file contains '/' skip search
+	mov	rdi, [exmb+mb_args+0]
+	call	str_len
+	mov	rcx, rdx
+	mov	al, '/'
+	mov	rdi, [exmb+mb_args+0]
+	call	str_ch
+	mov	rax, [exmb+mb_args+0]
+	cmp	byte[rax+rdx], '/'
+	jnz	__exec_fork_try; did not find any '/'
+
+	sys_execve [exmb+mb_args+0], exmb+mb_args, [exmb+mb_envp]
+	jmp	_panic
+
+__exec_fork_try:
+	mov	rdi, [exmb+mb_args+0]
+	dec	rdi
+	mov	byte[rdi], '/'
+	mov	[exmb+mb_args+0], rdi
+__exec_fork_next:
+	mov	r12, [exmb+mb_paths+(r10+1)*8]
+	test	r12, r12	; -> ZF: end is null pointer (stops)
+	jz	__exec_fork_fail
+	mov	r11, [exmb+mb_paths+(r10+0)*8]
+	inc	r10		; exmb.paths[k++] -> r11: string
+	sub	r12, r11	; -> r12: length
+	dec	r12		; -> ZF: str is empty string (skips)
+	jz	__exec_fork_next
+	; at this point: r11 is the string, r12 its length
+
+	; build full path by prepending to exmb.args[0]
+	mov	rdi, [exmb+mb_args+0]
+	sub	rdi, r12
+	mov	rsi, r11
+	mov	rcx, r12
+	call	str_mov
+
+	mov	rax, [exmb+mb_args+0]
+	sub	rax, r12
+	; with rdx length of prepended path
+	sys_execve rax, exmb+mb_args, [exmb+mb_envp]
+
+	; the execution can only continue here if execve failed
 	; execve can yield:
-	;  EACCES                try next, notice
+	;  EACCES                try next (should notice)
 	;  ENOENT/ESTALE/ENOTDIR try next
 	;  ENODEV/ETIMEDOUT      try next
 	;  default               abort, notice
-	sys_execve [exmb+mb_args+0], exmb+mb_args, [exmb+mb_envp]
+	mov	rcx, rax
+	cmp	rax, EACCES
+	;cmovz	[did_find_something], true
+	setnz	al
+
+%macro or_err 1
+	cmp	rcx, %1
+	lahf
+	shr	ah, 6		; 6th flag (ZF)
+	or	al, ah
+%endmacro
+	or_err ENOENT
+	or_err ESTALE
+	or_err ENOTDIR
+	or_err ENODEV
+	or_err ETIMEDOUT
+%unmacro or_err 1
+
+	test	al, 1
+	mov	rax, rcx	; restore original err
+	jnz	__exec_fork_next
+
+__exec_fork_fail:
+	; the execution can only get here if all failed
+
 	jmp	_panic
 
 ; exec_done:
