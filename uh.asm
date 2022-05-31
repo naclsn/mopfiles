@@ -56,11 +56,21 @@ __path_print_done:
 	debug_send
 
 	; DEBUG: ask input and execve it (no forking yet)
+__test_loop_repeat:
 	sys_read 0, exmb+mb_buf, minibuf_cap ; -> rax: length
 	mov	[exmb+mb_buf+rax], byte 0
+
 	call	exec_parse
+
+	mov	rdx, [exmb+mb_args+0]
+	mov	ebx, [rdx]
+	cmp	ebx, 'quit'
+	jz	__test_loop_quit
+
 	call	exec_print ; *-*
 	call	exec_fork
+	jmp	__test_loop_repeat
+__test_loop_quit:
 
 	sys_exit 0
 

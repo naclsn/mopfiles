@@ -199,8 +199,9 @@ __exec_parse_not_simpleq:
 	jmp	__exec_parse_next_char
 
 __exec_parse_done:
-	mov	[rsi], byte 0
-	mov	[r10], byte 0
+	mov	byte [rsi], 0 ; \0 byte at the end of last arg value
+	mov	byte [r10], 0 ; same way, end the copy (hist) with \0
+	mov	qword [rdi], 0 ; null pointer after last arg in argv
 
 	ret
 
@@ -242,6 +243,16 @@ __exec_print_args:
 	ret
 
 exec_fork:
+	sys_fork
+	test	rax, rax
+	jz	__exec_fork_child
+	jc	__exec_fork_abort
+	ret			; parent: everything good
+__exec_fork_abort:
+	jmp	_panic		; parent: something wrong
+__exec_fork_child:
+				; child: everything good
+
 	xor	r10, r10	; index into exmb.paths
 
 	; if file contains '/' skip search

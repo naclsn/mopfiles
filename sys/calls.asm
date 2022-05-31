@@ -62,6 +62,11 @@
 	syscall
 %endmacro
 
+%macro sys_fork 0 ; ()
+	mov	rax, 57
+	syscall
+%endmacro
+
 %macro sys_execve 3 ; (filename, *argv, *envp)
 	mov	rdx, %3
 	mov	rsi, %2
