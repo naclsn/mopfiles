@@ -1,46 +1,22 @@
 #!/usr/bin/env sh
 
-d=$([ '-d' = "$1" ] && echo 1); [ '-d' = "$1" ] && shift
-c=:
-b=${1:-uh.asm}
-a=${b%.asm}
-if [ '-r' = "$b" ]
-    then
-        a=uh
-    else
-        if [ '-h' = "$b" ] || [ "$a" = "$b" ] || ! [ -f "$b" ]
-            then
-                echo "Usage: $0 [-d] [<file.asm>] [-r <args>]"
-                echo '  default file: ./uh.asm'
-                echo '  use -r to run right away'
-                echo '  use -d to build with debug symbol'
-                echo '  -d implies -r'
-                exit 2
-        fi
-        [ 0 -eq $# ] || shift
-fi
-if [ '-r' = "$1" ] || [ -n "$d" ]
-    then
-        [ '-r' = "$1" ] && shift
-        c="./bin/$a"
-fi
-[ -d bin/ ] || mkdir bin/
-
+c=$1; [ 0 -eq $# ] || shift
 set -ex
-if { [ -z "$d" ]; } 2>/dev/null
-    then
-        # release build
-        nasm -f elf64 -o "bin/$a.o" "$a.asm"
-        ld -m elf_x86_64 -s -o "bin/$a" "bin/$a.o"
-
-        { set +e; } 2>/dev/null
-        "$c" $@
+case $c in
+    -r)
+        make release
+        ./bin/uh $@
         { echo + "# exit code: $?"; } 2>/dev/null
-
-    else
-        # debug build
-        nasm -f elf64 -F dwarf -g -l "bin/$a.lst" -o "bin/$a.o" "$a.asm"
-        ld -m elf_x86_64 -o "bin/$a" "bin/$a.o"
-
-        gdb -q --args "$c" $@
-fi
+        ;;
+    -d)
+        make debug
+        gdb -q --args ./bin/uh $@
+        ;;
+    *)
+        set +x
+        echo "Usage: $0 [-rd <args>]"
+        echo '  use -r to run right away'
+        echo '  use -d to build with debug symbol'
+        exit 2
+        ;;
+esac

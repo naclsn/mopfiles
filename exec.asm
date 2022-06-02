@@ -123,6 +123,10 @@ exec_parse:
 	mov	rsi, exmb+mb_buf-1
 	mov	rdi, exmb+mb_args
 	mov	r10, exmb+mb_hist_buf ; TODO
+
+	test	rax, rax ; (ie ^D)
+	jz	__exec_parse_done ; *-*
+
 	; bl (and bh): 0 blank, 1 char, 2/3 quoted (simple/double)
 	xor	bl, bl
 __exec_parse_next_char:
@@ -199,48 +203,48 @@ __exec_parse_not_simpleq:
 	jmp	__exec_parse_next_char
 
 __exec_parse_done:
-	mov	byte [rsi], 0 ; \0 byte at the end of last arg value
-	mov	byte [r10], 0 ; same way, end the copy (hist) with \0
-	mov	qword [rdi], 0 ; null pointer after last arg in argv
+	mov	byte[rsi], 0 ; \0 byte at the end of last arg value
+	mov	byte[r10], 0 ; same way, end the copy (hist) with \0
+	mov	qword[rdi], 0 ; null pointer after last arg in argv
 
 	ret
 
-exec_print: ; *-*
-	sub	rdi, exmb+mb_args
-	shr	rdi, 3
-	push	rdi
-	debug_put_number rdi
-	debug_put_bytes {" argument(s):", 10}
-	debug_send
+; exec_print: ; *-*
+; 	sub	rdi, exmb+mb_args
+; 	shr	rdi, 3
+; 	push	rdi
+; 	debug_put_number rdi
+; 	debug_put_bytes {" argument(s):", 10}
+; 	debug_send
 
-	pop	r15		; current arg number
-	dec	r15
-__exec_print_args:
-	debug_put_bytes "exmb.args["
-	debug_put_number r15
-	debug_put_bytes "]: "
+; 	pop	r15		; current arg number
+; 	dec	r15
+; __exec_print_args:
+; 	debug_put_bytes "exmb.args["
+; 	debug_put_number r15
+; 	debug_put_bytes "]: "
 
-	mov	rdi, [exmb+mb_args+r15*8]
-	push	rdi
-	call	str_len		; -> rdx: length
-	pop	rdi
-	debug_put_buffer rdi, rdx
-	debug_put_byte 10
-	debug_send
+; 	mov	rdi, [exmb+mb_args+r15*8]
+; 	push	rdi
+; 	call	str_len		; -> rdx: length
+; 	pop	rdi
+; 	debug_put_buffer rdi, rdx
+; 	debug_put_byte 10
+; 	debug_send
 
-	sub	r15, 1
-	jnc	__exec_print_args
+; 	sub	r15, 1
+; 	jnc	__exec_print_args
 
-	debug_put_bytes "copy (exmb.back): #"
-	mov	rdi, exmb+mb_hist_buf
-	push	rdi
-	call	str_len		; -> rdx: length
-	pop	rdi
-	debug_put_buffer rdi, rdx
-	debug_put_bytes {"#", 10}
-	debug_send
+; 	debug_put_bytes "copy (exmb.back): #"
+; 	mov	rdi, exmb+mb_hist_buf
+; 	push	rdi
+; 	call	str_len		; -> rdx: length
+; 	pop	rdi
+; 	debug_put_buffer rdi, rdx
+; 	debug_put_bytes {"#", 10}
+; 	debug_send
 
-	ret
+; 	ret
 
 exec_fork:
 	sys_fork
@@ -252,6 +256,8 @@ __exec_fork_abort:
 	jmp	_panic		; parent: something wrong
 __exec_fork_child:
 				; child: everything good
+	mov	qword[panic_msg_len], child_panic_msg_len
+	mov	byte[panic_msg+parent_panic_msg_len-1], ' '
 
 	xor	r10, r10	; index into exmb.paths
 

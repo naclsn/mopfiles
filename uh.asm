@@ -15,7 +15,10 @@
 
 section .data
 	panic_msg:		db "Panic, exiting", 10
-	panic_msg_len:		equ $-panic_msg
+	parent_panic_msg_len:	equ $-panic_msg
+				db "(no such program)", 10
+	child_panic_msg_len:	equ $-panic_msg
+	panic_msg_len:		dq parent_panic_msg_len
 
 section .text
 	global _start
@@ -28,55 +31,31 @@ _start:
 	file_main		; [fn], [txt] -> [fst], [txt], ...tbc
 	view_main
 
-	; DEBUG: print path entries
-	debug_put_bytes {"found PATH entries:", 10}
-	debug_send
-	xor	r15, r15
-__path_print_next:
-	mov	rbx, [exmb+mb_paths+(r15+1)*8]
-	test	rbx, rbx	; -> ZF: end is null pointer (should stop)
-	jz	__path_print_done
-	mov	rax, [exmb+mb_paths+(r15+0)*8]
-	sub	rbx, rax
-	inc	r15
-	dec	rbx		; -> ZF: str is empty string (should skip)
-	jz	__path_print_next
-	debug_put_buffer rax, rbx
-	debug_put_byte 10
-	debug_send
-	jmp	__path_print_next
-__path_print_done:
+	; DEBUG: ask input and execve it
+_loop:
+	call	view_update
 
-	; DEBUG: print config_dir
-	debug_put_bytes "config_dir: "
-	mov	rdi, [config_dir]
-	call	str_len
-	debug_put_buffer [config_dir], rdx
-	debug_put_byte 10
-	debug_send
-
-	; DEBUG: ask input and execve it (no forking yet)
-__test_loop_repeat:
 	sys_read 0, exmb+mb_buf, minibuf_cap ; -> rax: length
-	mov	[exmb+mb_buf+rax], byte 0
+	mov	byte[exmb+mb_buf+rax], 0
 
 	call	exec_parse
 
 	mov	rdx, [exmb+mb_args+0]
+	test	rdx, rdx	; no argument given
+	jz	_loop
 	mov	ebx, [rdx]
 	cmp	ebx, 'quit'
-	jz	__test_loop_quit
+	jz	_quit
 
-	call	exec_print ; *-*
 	call	exec_fork
-	jmp	__test_loop_repeat
-__test_loop_quit:
+	jmp	_loop
 
+_quit:
 	sys_exit 0
 
 _panic:
 	neg	rax
 	mov	r10, rax
-	sys_write 2, panic_msg, panic_msg_len
+	sys_write 2, panic_msg, [panic_msg_len]
 	sys_exit r10
 	jmp	_panic
