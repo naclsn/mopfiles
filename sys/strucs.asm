@@ -18,4 +18,11 @@ struc stat
 	st_ctime:	resb 8 ; offset: 104
 endstruc
 
+struc winsize
+	ws_row:		resb 2 ; offset: 0
+	ws_col:		resb 2 ; offset: 2
+	ws_xpixel:	resb 2 ; offset: 4
+	ws_ypixel:	resb 2 ; offset: 6
+endstruc
+
 %endif ; STRUCS_ASM

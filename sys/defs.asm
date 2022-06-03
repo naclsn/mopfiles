@@ -10,4 +10,6 @@
 
 	MAP_PRIVATE	equ 2
 
+	TIOCGWINSZ	equ 0x5413
+
 %endif ; DEFS_ASM

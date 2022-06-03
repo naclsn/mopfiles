@@ -2,6 +2,8 @@
 %define VIEW_ASM
 
 section .bss
+	vwsize:			resb winsize_size
+
 	top_anchor:		resb anchor_size
 	head_anchor:		resb anchor_size ; printing head
 
@@ -25,8 +27,13 @@ view_start:
 	jmp	view_done
 
 view_update:
-	; shows 20 lines from top_anchor
-	; TODO: get terminal size and such
+	; get terminal size (does not use signal)
+	; NOTE: uses the stdout fd because that makes the most sense
+	sys_ioctl 1, TIOCGWINSZ, vwsize
+	test	rax, rax
+	jz	__view_update_isterm
+	jmp	_panic		; not a terminal
+__view_update_isterm:
 
 	; move the head back to the top
 	lea	rsi, [top_anchor]
@@ -35,13 +42,19 @@ view_update:
 	call	str_mov
 
 	xor	r10, r10	; index in ab
-	mov	r11, 20		; line counter
+	xor	r11, r11	; line counter
+	mov	r11w, [vwsize+ws_row]
+	dec	r11
+	dec	r11		; account for the temporary "---\n:"
 
 __view_update_advance:
 	; save node starting location
 	mov	rbx, [head_anchor+an_at]
 	; after the call to test_iter,
 	; [rbx] to [rbx+rcx] is the printable buffer
+
+	test	rbx, rbx	; previous was last node
+	jz	__view_update_donech
 
 	mov	rax, head_anchor
 	mov	dl, 1
@@ -63,6 +76,14 @@ __view_update_nextch:
 	dec	rcx
 	jnz	__view_update_nextch
 __view_update_donech:
+
+	; pad with ~ lines
+__view_update_padempty:
+	add	r10, 2
+	mov	word[tmp_ab+r10], `~\n`
+	dec	r11
+	jnz	__view_update_padempty
+	inc	r10
 
 	; TODO: proper status bar
 	;       for now: printf("--- %s\n:", fn)
