@@ -62,10 +62,18 @@ struc anchor
 	an_at:		resq 1 ; : char*
 endstruc
 
+struc focus
+	fc_begin1:	resb anchor_size
+	fc_begin2:	resb anchor_size
+	fc_end1:	resb anchor_size
+	fc_end2:	resb anchor_size
+endstruc
+
 section .bss
 	txt:		resb mesh_size
 	txt1:		resb anchor_size
 	txt2:		resb anchor_size
+	foc:		resb focus_size
 
 %macro text_main 0
 	jmp	text_start
@@ -112,7 +120,7 @@ text_init:
 
 	mov	r12, [txt+ms_chain+ch_node2]
 
-_text_update_ends:
+__text_update_ends:
 	mov	[txt1+an_node], r11
 	mov	rax, [r11+nd_a]
 	mov	[txt1+an_at], rax
@@ -130,17 +138,17 @@ text_iter:
 
 	; such invalid anchor marks the end of iteration
 	test	r9, r9
-	jnz	_text_iter_proceed
+	jnz	__text_iter_proceed
 	xor	rcx, rcx
 	ret
 
-_text_iter_proceed:
+__text_iter_proceed:
 	mov	rcx, [rax+an_at]
 
 	cmp	dl, 0
-	jc	_text_iter_backward
+	jc	__text_iter_backward
 
-_text_iter_forward:
+__text_iter_forward:
 	sub	rcx, [r9+nd_b]
 	neg	rcx
 
@@ -148,24 +156,24 @@ _text_iter_forward:
 	mov	r9, [r9+nd_next]
 	mov	[rax+an_node], r9
 	test	r9, r9
-	jz	_text_iter_ret
+	jz	__text_iter_ret
 	mov	r9, [r9+nd_a]
 	mov	[rax+an_at], r9
 
 	ret
 
-_text_iter_backward:
+__text_iter_backward:
 	sub	rcx, [r9+nd_a]
 
 	; move anchor to prev node (even if none)
 	mov	r9, [r9+nd_prev]
 	mov	[rax+an_node], r9
 	test	r9, r9
-	jz	_text_iter_ret
+	jz	__text_iter_ret
 	mov	r9, [r9+nd_b]
 	mov	[rax+an_at], r9
 
-_text_iter_ret:
+__text_iter_ret:
 	ret
 
 	jmp	text_done
