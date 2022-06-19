@@ -5,6 +5,7 @@
 
 %include "hlp/str.asm"
 %include "hlp/iota.asm"
+%include "hlp/struc.asm"
 %include "hlp/debug.asm"
 
 %include "args.asm"		; -> args_main

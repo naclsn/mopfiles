@@ -69,11 +69,15 @@ struc focus
 	fc_end2:	resb anchor_size
 endstruc
 
+	FCL_CHAR:	equ 1
+	FCL_WORD:	equ 2
+	FCL_OBJECT:	equ 3
 section .bss
 	txt:		resb mesh_size
 	txt1:		resb anchor_size
 	txt2:		resb anchor_size
 	foc:		resb focus_size
+	foc_level:	resq 1
 
 %macro text_main 0
 	jmp	text_start
@@ -129,6 +133,33 @@ __text_update_ends:
 	mov	rax, [r12+nd_b]
 	mov	[txt2+an_at], rax
 
+	ret
+
+; rax: anchor*, rdx: direction -> rcx: length
+;   push	r9		; curr_node
+text_cast:
+	mov	r9, [rax+an_node]
+
+	; such invalid anchor marks the end of iteration
+	test	r9, r9
+	jnz	__text_cast_proceed
+	xor	rcx, rcx
+	ret
+
+__text_cast_proceed:
+	mov	rcx, [rax+an_at]
+
+	cmp	dl, 0
+	jc	__text_cast_backward
+
+__text_cast_forward:
+	sub	rcx, [r9+nd_b]
+	neg	rcx
+
+__text_cast_backward:
+	sub	rcx, [r9+nd_a]
+
+__text_cast_ret:
 	ret
 
 ; rax: anchor*, rdx: direction -> rcx: length

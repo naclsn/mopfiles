@@ -19,10 +19,7 @@ view_done:
 section .text
 view_start:
 	; get top_anchor to the very beginning of the text
-	lea	rsi, [txt1]
-	lea	rdi, [top_anchor]
-	mov	rcx, anchor_size
-	call	str_mov
+	struc_mov anchor, [top_anchor], [txt1]
 
 	call	view_initial
 
@@ -37,14 +34,11 @@ view_initial:
 	; TODO: use machine search (mach_forward)
 	;       for now simply (no) scans to next space
 	; move the head back to the top
-	lea	rsi, [top_anchor]
-	lea	rdi, [head_anchor]
-	mov	rcx, anchor_size
-	call	str_mov
+	struc_mov anchor, [head_anchor], [top_anchor]
 __view_initial_advance:
 	; save node starting location
 	mov	rbx, [head_anchor+an_at]
-	; after the call to test_iter,
+	; after the call to text_iter,
 	; [rbx] to [rbx+rcx] is the printable buffer
 	test	rbx, rbx	; previous was last node
 	jz	__view_initial_donech
@@ -60,7 +54,7 @@ __view_initial_nextch:
 	jnz	__view_initial_nextch
 	jmp	__view_initial_donech
 __view_initial_foundspace:
-	; the focus's begin is set to be txt1..txt1
+	; the focus's begin is set to be txt1..txt1 (the BOF - hence not visible)
 	mov	rax, [txt1+an_node]
 	mov	[foc+fc_begin1+an_node], rax
 	mov	rax, [txt1+an_at]
@@ -69,7 +63,7 @@ __view_initial_foundspace:
 	mov	[foc+fc_begin2+an_node], rax
 	mov	rax, [txt1+an_at]
 	mov	[foc+fc_begin2+an_at], rax
-	; and its end is the head_anchor-1..head_anchor
+	; and its end is the head_anchor-1..head_anchor (the space)
 	mov	rax, [txt1+an_node]
 	mov	[foc+fc_end1+an_node], rax
 	lea	rax, [rbx-1]
@@ -79,9 +73,6 @@ __view_initial_foundspace:
 	mov	rax, rbx
 	mov	[foc+fc_end2+an_at], rax
 __view_initial_donech:
-
-	; TODO: (waaay later) highlight first pass
-	;       find first range
 
 	jmp	__view_update_common
 
@@ -102,10 +93,7 @@ __view_update_common:
 __view_update_isterm:
 
 	; move the head back to the top
-	lea	rsi, [top_anchor]
-	lea	rdi, [head_anchor]
-	mov	rcx, anchor_size
-	call	str_mov
+	struc_mov anchor, [head_anchor], [top_anchor]
 
 	mov	r10, 7		; index in ab (start after the cls)
 	xor	r11, r11	; line counter
