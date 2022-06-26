@@ -156,6 +156,8 @@ __text_cast_forward:
 	sub	rcx, [r9+nd_b]
 	neg	rcx
 
+	ret
+
 __text_cast_backward:
 	sub	rcx, [r9+nd_a]
 

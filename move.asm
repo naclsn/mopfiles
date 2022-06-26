@@ -32,10 +32,12 @@ move_done:
 section .text
 move_start:
 	; TODO: some hard-coded machines for now
+	xor	rax, rax
+
 	jmp	move_done
 
 move_forward:
-	cmp	[foc_level], FCL_CHAR
+	cmp	qword[foc_level], FCL_CHAR
 	jnz	__move_foward_notchar
 
 	; when at the level of characters, foward is:
@@ -47,13 +49,13 @@ __move_forward_char:
 	; backup end2 before _iter
 	struc_mov anchor, [head_anchor], [foc+fc_end2]
 	mov	dl, 1
-	mov	rax, [foc+fc_end2]
+	lea	rax, [foc+fc_end2]
 	call	text_cast	; -> rcx: length
-	text	rcx, rcx	; no char left here apparently
+	test	rcx, rcx	; no char left here apparently
 	jnz	__move_foward_char_can
 	call	text_iter	; .. will try with next one
 	call	text_cast	; -> rcx: length
-	text	rcx, rcx	; still none means EOF
+	test	rcx, rcx	; still none means EOF
 	jnz	__move_foward_char_can
 	struc_mov anchor, [foc+fc_end2], [head_anchor]
 	ret
@@ -61,11 +63,13 @@ __move_foward_char_can:
 	struc_mov anchor, [foc+fc_begin1], [foc+fc_begin2]
 	struc_mov anchor, [foc+fc_begin2], [foc+fc_end1]
 	struc_mov anchor, [foc+fc_end1], [head_anchor]
-	mov	xyz, [foc+fc_end2+an_node+nd_at]
-	inc	xyz
-	mov	[foc+fc_end2+an_node+nd_at], xyz
+	mov	rax, [foc+fc_end2+an_at]
+	inc	rax
+	mov	[foc+fc_end2+an_at], rax
+	ret
 __move_foward_notchar:
 
+	sys_exit 42 ; not implemented
 	ret
 
 move_backward:

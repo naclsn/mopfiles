@@ -12,7 +12,10 @@
 %include "exec.asm"
 %include "text.asm"		; -> text_main, ... tbc
 %include "file.asm"		; -> file_main
+%include "move.asm"
 %include "view.asm"		; -> view_main
+
+%include "keys.asm"
 
 section .data
 	panic_msg:		db "Panic, exiting", 10
@@ -27,11 +30,13 @@ section .text
 _start:
 	args_main		; argc, argv -> [fn], [fn_len], ...tbc
 	exec_main		; envp -> [exmb], ...tbc
-	; objs_main or something to inits the machines and such
 	text_main		; -> [txt], ...tbc
 	file_main		; [fn], [txt] -> [fst], [txt], ...tbc
+	move_main
 	view_main
 
+	; DEBUG: force into char focus level
+	mov	qword[foc_level], FCL_CHAR
 	; DEBUG: ask input and execve it
 _loop:
 	call	view_update
@@ -45,9 +50,23 @@ _loop:
 	test	rdx, rdx	; no argument given
 	jz	_loop
 	mov	ebx, [rdx]
-	cmp	ebx, 'quit'
-	jz	_quit
 
+	; temp test: maps key to action (see keys.asm)
+	mov	rcx, rbx
+	and	rcx, 0xFF
+	mov	rax, [keymap+8*rcx]
+	test	rax, rax
+	jz	_loop
+	call	rax
+	jmp	_loop
+
+	; cmp	bl, 'q'
+	; jz	_quit
+
+	; cmp	bl, 'l'
+	; call	move_forward
+
+	; [unreachable]
 	call	exec_fork
 	jmp	_loop
 
