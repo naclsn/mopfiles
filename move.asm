@@ -32,15 +32,13 @@ move_done:
 section .text
 move_start:
 	; TODO: some hard-coded machines for now
-	xor	rax, rax
-
 	jmp	move_done
 
 move_forward:
 	cmp	qword[foc_level], FCL_CHAR
-	jnz	__move_foward_notchar
+	jnz	__move_forward_notchar
 
-	; when at the level of characters, foward is:
+	; when at the level of characters, forward is:
 	; begin1 <- begin2
 	; begin2 <- end1
 	; end1 <- end2
@@ -52,14 +50,14 @@ __move_forward_char:
 	lea	rax, [foc+fc_end2]
 	call	text_cast	; -> rcx: length
 	test	rcx, rcx	; no char left here apparently
-	jnz	__move_foward_char_can
+	jnz	__move_forward_char_can
 	call	text_iter	; .. will try with next one
 	call	text_cast	; -> rcx: length
 	test	rcx, rcx	; still none means EOF
-	jnz	__move_foward_char_can
+	jnz	__move_forward_char_can
 	struc_mov anchor, [foc+fc_end2], [head_anchor]
 	ret
-__move_foward_char_can:
+__move_forward_char_can:
 	struc_mov anchor, [foc+fc_begin1], [foc+fc_begin2]
 	struc_mov anchor, [foc+fc_begin2], [foc+fc_end1]
 	struc_mov anchor, [foc+fc_end1], [head_anchor]
@@ -67,13 +65,51 @@ __move_foward_char_can:
 	inc	rax
 	mov	[foc+fc_end2+an_at], rax
 	ret
-__move_foward_notchar:
+__move_forward_notchar:
 
 	sys_exit 42 ; not implemented
 	ret
 
 move_backward:
+	cmp	qword[foc_level], FCL_CHAR
+	jnz	__move_backward_notchar
+
+	; when at the level of characters, backward is:
+	; end2 <- end1
+	; end1 <- begin2
+	; begin2 <- begin1
+	; begin1 is moved 1 character
+	; XXX/FIXME: somewhere in there a test is not working
+	;            and it is possible to move before BOF
+	;            (note that it is probably the same
+	;            as for `forward` above)
+__move_backward_char:
+	; backup begin1 before _iter
+	struc_mov anchor, [head_anchor], [foc+fc_begin1]
+	mov	dl, -1
+	lea	rax, [foc+fc_begin1]
+	call	text_cast	; -> rcx: length
+	test	rcx, rcx	; no char left here apparently
+	jnz	__move_backward_char_can
+	call	text_iter	; .. will try with next one
+	call	text_cast	; -> rcx: length
+	test	rcx, rcx	; still none means EOF
+	jnz	__move_backward_char_can
+	struc_mov anchor, [foc+fc_begin1], [head_anchor]
 	ret
+__move_backward_char_can:
+	struc_mov anchor, [foc+fc_end2], [foc+fc_end1]
+	struc_mov anchor, [foc+fc_end1], [foc+fc_begin2]
+	struc_mov anchor, [foc+fc_begin2], [head_anchor]
+	mov	rax, [foc+fc_begin1+an_at]
+	dec	rax
+	mov	[foc+fc_begin1+an_at], rax
+	ret
+__move_backward_notchar:
+
+	sys_exit 42 ; not implemented
+	ret
+
 move_outward:
 	ret
 move_inward:

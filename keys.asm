@@ -9,6 +9,7 @@
 section .data
 	keymap:
 	kat	'!', exec_fork ; TODO: not accurate, place-holder
+	kat	'h', move_backward
 	kat	'l', move_forward
 	kat	'q', _quit
 
