@@ -1,5 +1,5 @@
-#!/bin/sh -ex
+#!/bin/sh -e
+does() { echo "$@"; "$@"; }
 prog=$(basename $(dirname $(realpath "$0")))
-cc main.c -o $prog -Wall -Wextra -pedantic
-[ -f me ] && rm me
-exec ./$prog "$@"
+[ main.c -nt $prog ] && does cc main.c -o $prog -Wall -Wextra -pedantic
+[ $1- = -n- ] || does exec ./$prog "$@"
