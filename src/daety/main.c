@@ -1,5 +1,10 @@
 #define _XOPEN_SOURCE 501
 
+/*
+   k, so you're not supposed to use ptm side
+   like this; TODO: rewrite to flip back again
+*/
+
 /* TODOs:
  - fork before exec, parent will clean up idf
  - catch and forward signals from client
@@ -56,7 +61,7 @@ int existing(char const* idf) {
     }
 
     char buf[1024]; // YYY: buffer size
-    char* at;
+    char* at = buf;
     ssize_t off = 0;
     do {
         off = read(fd, at, 1024-(at-buf));
