@@ -1,10 +1,5 @@
 #define _XOPEN_SOURCE 501
 
-/*
-   k, so you're not supposed to use ptm side
-   like this; TODO: rewrite to flip back again
-*/
-
 /* TODOs:
  - fork before exec, parent will clean up idf
  - catch and forward signals from client
@@ -27,6 +22,8 @@
 #include <string.h>
 #include <sys/ioctl.h>
 #include <sys/select.h>
+#include <sys/stat.h>
+#include <sys/types.h>
 #include <sys/wait.h>
 #include <termios.h>
 #include <unistd.h>
@@ -54,36 +51,15 @@ void identify(char* argv[], char* idf) {
 
 /// returns the pts fd or -1 if it does not exist
 int existing(char const* idf) {
-    int fd = open(idf, O_RDONLY|O_NOCTTY);
+    int fd = open(idf, O_RDWR|O_NOCTTY);
     if (fd < 0) {
         if (ENOENT == errno) return -1;
         die("open(idf)");
     }
-
-    char buf[1024]; // YYY: buffer size
-    char* at = buf;
-    ssize_t off = 0;
-    do {
-        off = read(fd, at, 1024-(at-buf));
-        if (off < 0) {
-            close(fd);
-            return -1;
-        }
-        at+= off;
-    } while (off);
-    *at = '\0';
-
-    char ptname[256]; // YYY: buffer size
-    pid_t dpid;
-    sscanf(buf, "%s\n%d\n", ptname, &dpid);
-    close(fd);
-
-    fd = open(ptname, O_RDWR|O_NOCTTY); // TODO: may have things to do (eg send SIGWINCH?)
-    if (fd < 0) die("open(pts)")
     return fd;
 }
 
-/// returns the pts fd; daemon does not return
+/// returns the fifo fd; daemon does not return
 int spawn(char* argv[], char const* idf, struct termios const* tio, struct winsize const* ws) {
     // {{{ open both ends
     int ptm = open("/dev/ptmx", O_RDWR|O_NOCTTY);
@@ -104,33 +80,60 @@ int spawn(char* argv[], char const* idf, struct termios const* tio, struct winsi
     }
     // }}}
 
-    // {{{ fork once, child only keeps ptm, parent resumes as client
+    // {{{ apply tio/ws
+    if (tio && tcsetattr(ptm, TCSAFLUSH, tio) < 0) {
+        close(ptm);
+        close(pts);
+        die("tcsetattr");
+    }
+    if (ws && ioctl(ptm, TIOCSWINSZ, ws) < 0) {
+        close(ptm);
+        close(pts);
+        die("ioctl(TIOCSWINSZ)");
+    }
+    // }}}
+
+    // {{{ open fifo here (fail early or something)
+    int fifo = mkfifo(idf, 420);
+    if (fifo < 0) {
+        close(ptm);
+        close(pts);
+        die("mkfifo");
+    }
+    // }}}
+
+    // {{{ fork once, child will be server, parent resumes as client
     pid_t cpid = fork();
     if (cpid < 0) {
         close(ptm);
         close(pts);
+        close(fifo);
         die("fork");
     }
     if (0 < cpid) {
         close(ptm);
-        return pts;
+        close(pts);
+        return fifo;
     }
-    close(pts);
     // }}}
 
-    // {{{ setup for a daemon f-fork, with ptm as controlling
+    // {{{ setup for a daemon double fork, with pts as controlling
     signal(SIGHUP, SIG_IGN); // ignore being detached from tty
     // XXX: what about an already set handler? can probably re-install it
 
     if (setsid() < 0) {
         close(ptm);
+        close(pts);
+        close(fifo);
         die("setsid");
     }
 
 #ifdef TIOCSCTTY
     // YYY: this needed?
-    if (ioctl(ptm, TIOCSCTTY, NULL) < 0) {
+    if (ioctl(pts, TIOCSCTTY, NULL) < 0) {
         close(ptm);
+        close(pts);
+        close(fifo);
         die("ioctl(TIOCSCTTY)");
     }
 #endif
@@ -138,48 +141,55 @@ int spawn(char* argv[], char const* idf, struct termios const* tio, struct winsi
     cpid = fork();
     if (cpid < 0) {
         close(ptm);
+        close(pts);
+        close(fifo);
         die("fork");
     }
     if (0 < cpid) {
         close(ptm);
+        close(pts);
+        close(fifo);
+        sleep(3); // YYY: it's supposed to wait for the daemon to be setup..?
         exit(EXIT_SUCCESS);
     }
     // }}}
 
-    // {{{ post a letter with its address on it
-    {
-        int me = creat(idf, 420);
-        if (me < 0) {
-            close(ptm);
-            die("creat");
-        }
-        char buf[1024]; // YYY: buffer size
-        int len = sprintf(buf, "%s\n%d\n", ptname, getpid());
-        char const* at = buf;
-        do {
-            ssize_t wrote = write(me, at, len);
-            if (wrote < 0) {
-                close(me);
-                close(ptm);
-                die("write");
-            }
-            at+= wrote;
-            len-= wrote;
-        } while (len);
-        fsync(me);
-        close(me);
+    // {{{ here only daemon, last fork for the program itself
+    cpid = fork();
+    if (cpid < 0) {
+        close(ptm);
+        close(pts);
+        close(fifo);
+        die("fork");
     }
     // }}}
 
-    // {{{ here only daemon, setup i/o/e and exec
-    if (tio && tcsetattr(ptm, TCSAFLUSH, tio) < 0) {
+    if (0 == cpid) {
+        // {{{ keeps only pts: setup i/o/e and exec
         close(ptm);
-        die("tcsetattr");
+        close(fifo);
+
+        if (dup2(pts, STDIN_FILENO) < 0
+         || dup2(pts, STDOUT_FILENO) < 0
+         || dup2(pts, STDERR_FILENO) < 0) {
+            close(pts);
+            die("dup2");
+        }
+        if (STDERR_FILENO < pts) close(pts);
+
+        execvp(argv[0], argv);
+
+        if (pts <= STDERR_FILENO) close(pts);
+        die("execvp");
+        // }}}
     }
-    if (ws && ioctl(ptm, TIOCSWINSZ, ws) < 0) {
-        close(ptm);
-        die("ioctl(TIOCSWINSZ)");
-    }
+
+    // YYY: not sure I want any of that...
+    //umask(0);
+    //chdir("/");
+    // (drop other privileges)
+
+    close(pts);
 
     if (dup2(ptm, STDIN_FILENO) < 0
      || dup2(ptm, STDOUT_FILENO) < 0
@@ -189,18 +199,55 @@ int spawn(char* argv[], char const* idf, struct termios const* tio, struct winsi
     }
     if (STDERR_FILENO < ptm) close(ptm);
 
-    // YYY: not sure I want any of that...
-    //umask(0);
-    //chdir("/");
-    // (drop other privileges)
+    // {{{ (ptm -> fifo -> ptm)
+    fd_set fds;
+    FD_ZERO(&fds);
+    FD_SET(STDIN_FILENO, &fds);
+    FD_SET(fifo, &fds);
 
-    // TODO: fork one last time: child execs;
-    // parent waits on child and clean ifd
-    execvp(argv[0], argv);
+    bool done;
+    do {
+        fd_set cpy = fds;
+        if (select(fifo+1, &cpy, NULL, NULL, NULL) < 0) {
+            close(fifo);
+            die("select");
+        }
 
-    close(ptm);
-    die("execvp");
+        int in = -1, out = -1;
+        if (FD_ISSET(STDIN_FILENO, &cpy)) {
+            in = STDIN_FILENO;
+            out = fifo;
+        } else if (FD_ISSET(fifo, &cpy)) {
+            in = fifo;
+            out = STDOUT_FILENO;
+        } else continue;
+
+#define BUF_SIZE 65535
+        char buf[BUF_SIZE];
+        ssize_t len = read(in, buf, BUF_SIZE);
+        if (len < 0) {
+            close(fifo);
+            die("read");
+        }
+        if (0 == len) done = true;
+
+        char const* at = buf;
+        while (len) {
+            ssize_t wrote = write(out, buf, len);
+            if (wrote < 0) {
+                close(fifo);
+                die("write");
+            }
+
+            at+= wrote;
+            len-= wrote;
+        }
+
+    } while (!done);
     // }}}
+
+    waitpid(cpid, NULL, 0);
+    exit(EXIT_SUCCESS);
     return -1;
 }
 
@@ -216,12 +263,6 @@ int main(int argc, char* argv[]) {
     // {{{ copy from terminal on stderr
     struct termios tio;
     if (tcgetattr(STDERR_FILENO, &tio) < 0) die("tcgetattr");
-    // cfmakeraw: 1960 magic shit
-    tio.c_iflag &= ~(IGNBRK | BRKINT | PARMRK | ISTRIP | INLCR | IGNCR | ICRNL | IXON);
-    tio.c_oflag &= ~(OPOST);
-    tio.c_lflag &= ~(ECHO | ECHONL | ICANON | ISIG | IEXTEN); // YYY: ISIG? (generate signals for INTR, QUIT, SUSP and DSUSP)
-    tio.c_cflag &= ~(CSIZE | PARENB);
-    tio.c_cflag |= CS8;
 
     struct winsize ws;
     if (ioctl(STDERR_FILENO, TIOCGWINSZ, &ws) < 0) die("ioctl(TIOCGWINSZ)");
@@ -231,8 +272,8 @@ int main(int argc, char* argv[]) {
     char idf[256]; // YYY: buffer size
     identify(argv, idf);
 
-    int pts = existing(idf);
-    if (pts < 0) pts = spawn(argv, idf, &tio, &ws);
+    int fifo = existing(idf);
+    if (fifo < 0) fifo = spawn(argv, idf, &tio, &ws);
     // }}}
 
     // {{{ setup signal
@@ -244,26 +285,26 @@ int main(int argc, char* argv[]) {
     //signal(SIGWINCH, SIG_IGN);
     // }}}
 
-    // {{{ stdin -> pts -> stdout
+    // {{{ stdin -> fifo -> stdout
     fd_set fds;
     FD_ZERO(&fds);
     FD_SET(STDIN_FILENO, &fds);
-    FD_SET(pts, &fds);
+    FD_SET(fifo, &fds);
 
     bool done;
     do {
         fd_set cpy = fds;
-        if (select(pts+1, &cpy, NULL, NULL, NULL) < 0) {
-            close(pts);
+        if (select(fifo+1, &cpy, NULL, NULL, NULL) < 0) {
+            close(fifo);
             die("select");
         }
 
         int in = -1, out = -1;
         if (FD_ISSET(STDIN_FILENO, &cpy)) {
             in = STDIN_FILENO;
-            out = pts;
-        } else if (FD_ISSET(pts, &cpy)) {
-            in = pts;
+            out = fifo;
+        } else if (FD_ISSET(fifo, &cpy)) {
+            in = fifo;
             out = STDOUT_FILENO;
         } else continue;
 
@@ -271,7 +312,7 @@ int main(int argc, char* argv[]) {
         char buf[BUF_SIZE];
         ssize_t len = read(in, buf, BUF_SIZE);
         if (len < 0) {
-            close(pts);
+            close(fifo);
             die("read");
         }
         if (0 == len) done = true;
@@ -280,7 +321,7 @@ int main(int argc, char* argv[]) {
         while (len) {
             ssize_t wrote = write(out, buf, len);
             if (wrote < 0) {
-                close(pts);
+                close(fifo);
                 die("write");
             }
 
@@ -291,6 +332,6 @@ int main(int argc, char* argv[]) {
     } while (!done);
     // }}}
 
-    close(pts);
+    close(fifo);
     return EXIT_SUCCESS;
 }
