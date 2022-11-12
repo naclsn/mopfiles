@@ -49,6 +49,54 @@ void identify(char* argv[], char* idf) {
     idf[4] = '\0';
 }
 
+// stdin -> fifo -> stdout
+void loop(int fifo) {
+    fd_set fds;
+    FD_ZERO(&fds);
+    FD_SET(STDIN_FILENO, &fds);
+    FD_SET(fifo, &fds);
+
+    bool done;
+    do {
+        fd_set cpy = fds;
+        if (select(fifo+1, &cpy, NULL, NULL, NULL) < 0) {
+            close(fifo);
+            die("select");
+        }
+
+        int in = -1, out = -1;
+        if (FD_ISSET(STDIN_FILENO, &cpy)) {
+            in = STDIN_FILENO;
+            out = fifo;
+        } else if (FD_ISSET(fifo, &cpy)) {
+            in = fifo;
+            out = STDOUT_FILENO;
+        } else continue;
+
+#define BUF_SIZE 65535
+        char buf[BUF_SIZE];
+        ssize_t len = read(in, buf, BUF_SIZE);
+        if (len < 0) {
+            close(fifo);
+            die("read");
+        }
+        if (0 == len) done = true;
+
+        char const* at = buf;
+        while (len) {
+            ssize_t wrote = write(out, buf, len);
+            if (wrote < 0) {
+                close(fifo);
+                die("write");
+            }
+
+            at+= wrote;
+            len-= wrote;
+        }
+
+    } while (!done);
+}
+
 /// returns the pts fd or -1 if it does not exist
 int existing(char const* idf) {
     int fd = open(idf, O_RDWR|O_NOCTTY);
@@ -94,11 +142,17 @@ int spawn(char* argv[], char const* idf, struct termios const* tio, struct winsi
     // }}}
 
     // {{{ open fifo here (fail early or something)
-    int fifo = mkfifo(idf, 420);
-    if (fifo < 0) {
+    if (mkfifo(idf, 420) < 0) {
         close(ptm);
         close(pts);
         die("mkfifo");
+    }
+
+    int fifo = open(idf, O_RDWR|O_NOCTTY);
+    if (fifo < 0) {
+        close(ptm);
+        close(pts);
+        die("open(fifo)");
     }
     // }}}
 
@@ -117,9 +171,8 @@ int spawn(char* argv[], char const* idf, struct termios const* tio, struct winsi
     }
     // }}}
 
-    // {{{ setup for a daemon double fork, with pts as controlling
+    // {{{ setup for a daemon fork, with pts as controlling (hence double fork not needed)
     signal(SIGHUP, SIG_IGN); // ignore being detached from tty
-    // XXX: what about an already set handler? can probably re-install it
 
     if (setsid() < 0) {
         close(ptm);
@@ -137,21 +190,6 @@ int spawn(char* argv[], char const* idf, struct termios const* tio, struct winsi
         die("ioctl(TIOCSCTTY)");
     }
 #endif
-
-    cpid = fork();
-    if (cpid < 0) {
-        close(ptm);
-        close(pts);
-        close(fifo);
-        die("fork");
-    }
-    if (0 < cpid) {
-        close(ptm);
-        close(pts);
-        close(fifo);
-        sleep(3); // YYY: it's supposed to wait for the daemon to be setup..?
-        exit(EXIT_SUCCESS);
-    }
     // }}}
 
     // {{{ here only daemon, last fork for the program itself
@@ -179,7 +217,6 @@ int spawn(char* argv[], char const* idf, struct termios const* tio, struct winsi
 
         execvp(argv[0], argv);
 
-        if (pts <= STDERR_FILENO) close(pts);
         die("execvp");
         // }}}
     }
@@ -192,61 +229,32 @@ int spawn(char* argv[], char const* idf, struct termios const* tio, struct winsi
     close(pts);
 
     if (dup2(ptm, STDIN_FILENO) < 0
-     || dup2(ptm, STDOUT_FILENO) < 0
-     || dup2(ptm, STDERR_FILENO) < 0) {
+     || dup2(ptm, STDOUT_FILENO) < 0) {
         close(ptm);
         die("dup2");
     }
     if (STDERR_FILENO < ptm) close(ptm);
 
-    // {{{ (ptm -> fifo -> ptm)
-    fd_set fds;
-    FD_ZERO(&fds);
-    FD_SET(STDIN_FILENO, &fds);
-    FD_SET(fifo, &fds);
+    int log = creat("./log.log", 420);
+    if (log < 0) {
+        close(ptm);
+        close(fifo);
+        die("open(log)");
+    }
+    if (dup2(log, STDERR_FILENO) < 0) {
+        close(ptm);
+        close(fifo);
+        close(log);
+        die("dup2");
+    }
+    if (log != STDERR_FILENO) close(log);
 
-    bool done;
-    do {
-        fd_set cpy = fds;
-        if (select(fifo+1, &cpy, NULL, NULL, NULL) < 0) {
-            close(fifo);
-            die("select");
-        }
+    loop(fifo); // YYY: also has to monitor child if it finished
+    close(fifo);
 
-        int in = -1, out = -1;
-        if (FD_ISSET(STDIN_FILENO, &cpy)) {
-            in = STDIN_FILENO;
-            out = fifo;
-        } else if (FD_ISSET(fifo, &cpy)) {
-            in = fifo;
-            out = STDOUT_FILENO;
-        } else continue;
-
-#define BUF_SIZE 65535
-        char buf[BUF_SIZE];
-        ssize_t len = read(in, buf, BUF_SIZE);
-        if (len < 0) {
-            close(fifo);
-            die("read");
-        }
-        if (0 == len) done = true;
-
-        char const* at = buf;
-        while (len) {
-            ssize_t wrote = write(out, buf, len);
-            if (wrote < 0) {
-                close(fifo);
-                die("write");
-            }
-
-            at+= wrote;
-            len-= wrote;
-        }
-
-    } while (!done);
-    // }}}
-
+    // YYY: need kill(cpid) here?
     waitpid(cpid, NULL, 0);
+
     exit(EXIT_SUCCESS);
     return -1;
 }
@@ -285,53 +293,8 @@ int main(int argc, char* argv[]) {
     //signal(SIGWINCH, SIG_IGN);
     // }}}
 
-    // {{{ stdin -> fifo -> stdout
-    fd_set fds;
-    FD_ZERO(&fds);
-    FD_SET(STDIN_FILENO, &fds);
-    FD_SET(fifo, &fds);
-
-    bool done;
-    do {
-        fd_set cpy = fds;
-        if (select(fifo+1, &cpy, NULL, NULL, NULL) < 0) {
-            close(fifo);
-            die("select");
-        }
-
-        int in = -1, out = -1;
-        if (FD_ISSET(STDIN_FILENO, &cpy)) {
-            in = STDIN_FILENO;
-            out = fifo;
-        } else if (FD_ISSET(fifo, &cpy)) {
-            in = fifo;
-            out = STDOUT_FILENO;
-        } else continue;
-
-#define BUF_SIZE 65535
-        char buf[BUF_SIZE];
-        ssize_t len = read(in, buf, BUF_SIZE);
-        if (len < 0) {
-            close(fifo);
-            die("read");
-        }
-        if (0 == len) done = true;
-
-        char const* at = buf;
-        while (len) {
-            ssize_t wrote = write(out, buf, len);
-            if (wrote < 0) {
-                close(fifo);
-                die("write");
-            }
-
-            at+= wrote;
-            len-= wrote;
-        }
-
-    } while (!done);
-    // }}}
-
+    loop(fifo);
     close(fifo);
+
     return EXIT_SUCCESS;
 }
