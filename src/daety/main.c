@@ -25,13 +25,13 @@ static char errbuf[4096];
     die(__msg);                \
 }
 #define log(__fmt, ...) {                                                          \
-    ssize_t l = sprintf(errbuf, "[%s:%d] %s\n", __FILE__, __LINE__, __fmt);        \
+    ssize_t l = sprintf(errbuf, "[%s:%-3d] %s\n", __FILE__, __LINE__, __fmt);      \
     write(STDERR_FILENO, errbuf+l+1, sprintf(errbuf+l+1, errbuf, ##__VA_ARGS__));  \
 }
 
 #define BUF_SIZE 65535
 
-// return full path of the fifo for argv[]
+/// return full path of the fifo for argv[]
 void identify(char* argv[], char* idf) {
     log("both: identify");
     (void)argv;
@@ -43,7 +43,7 @@ void identify(char* argv[], char* idf) {
     idf[4] = '\0';
 }
 
-// exec the program with pts as terminal
+/// exec the program with pts as terminal
 void program(int pts, char* argv[]) {
     log("program: program('%s'..)", argv[0]);
     log("program: last message before dup2");
@@ -63,7 +63,7 @@ void program(int pts, char* argv[]) {
     die("execvp");
 }
 
-// client loop (tty <-> fifo)
+/// client loop (tty <-> fifo)
 void client(int fifo) {
     // {{{ setup signal
     // TODO: implement proper working signal handlers (ISIG?)
@@ -80,8 +80,7 @@ void client(int fifo) {
     FD_SET(STDIN_FILENO, &fds);
     FD_SET(fifo, &fds);
 
-    bool done = false;
-    do {
+    while (1) {
         log("client: select(stdin, fifo)");
         fd_set cpy = fds;
         if (select(fifo+1, &cpy, NULL, NULL, NULL) < 0) {
@@ -107,8 +106,9 @@ void client(int fifo) {
             close(fifo);
             die("read");
         }
-        if (0 == len) {
-            log("client: read eof");
+        char* esc = memchr(buf, '\e', len);
+        if (0 == len || esc && esc-buf < len && '\0' == esc[1]) {
+            log(esc ? "client: server done" : "client: read eof");
             break;
         }
         log("client: transferring %d byte(s)", len);
@@ -124,8 +124,7 @@ void client(int fifo) {
             at+= wrote;
             len-= wrote;
         }
-
-    } while (!done);
+    } // while (1)
     // }}}
 
     log("client: done");
@@ -133,7 +132,7 @@ void client(int fifo) {
     exit(EXIT_SUCCESS);
 }
 
-// server loop (fifo <-> ptm || watch cpid)
+/// server loop (fifo <-> ptm || watch cpid)
 void server(int ptm, int fifo, pid_t cpid) {
     // umask(0);
     // chdir("/");
@@ -170,8 +169,7 @@ void server(int ptm, int fifo, pid_t cpid) {
     FD_SET(STDIN_FILENO, &fds);
     FD_SET(fifo, &fds);
 
-    bool done = false;
-    do {
+    while (1) {
         log("server: select(stdin, fifo)");
         fd_set cpy = fds;
         if (select(fifo+1, &cpy, NULL, NULL, NULL) < 0) {
@@ -199,6 +197,12 @@ void server(int ptm, int fifo, pid_t cpid) {
         }
         if (0 == len) {
             log("server: read eof");
+            log("server: last waiting");
+            // YYY: need kill(cpid) here?
+            if (waitpid(cpid, NULL, 0) < 0) {
+                close(fifo);
+                die("waitpid");
+            }
             break;
         }
         log("server: transferring %d byte(s)", len);
@@ -225,20 +229,12 @@ void server(int ptm, int fifo, pid_t cpid) {
             log("server: program done");
             break;
         }
-
-    } while (!done);
+    } // while (1)
     // }}}
 
-    log("server: last waiting");
-    // YYY: need kill(cpid) here?
-    if (waitpid(cpid, NULL, 0) < 0) {
-        close(fifo);
-        die("waitpid");
-    }
-
     log("server: done");
+    write(fifo, "\e\0", 2); // ZZZ: signal closing to client
     close(fifo);
-    exit(EXIT_SUCCESS);
 }
 
 /// returns the fifo fd or -1 if it does not exist
@@ -267,8 +263,7 @@ void multiplex(int* ptm, int* pts, struct termios const* tio, struct winsize con
         die("grantpt/unlockpt");
     }
 
-    char ptname[256]; // YYY: buffer size
-    strcpy(ptname, ptsname(*ptm));
+    char* ptname = ptsname(*ptm);
 
     *pts = open(ptname, O_RDWR|O_NOCTTY);
     if (*pts < 0) {
@@ -299,7 +294,7 @@ int spawn(char* argv[], char const* idf, struct termios const* tio, struct winsi
     int ptm, pts;
     multiplex(&ptm, &pts, tio, ws);
 
-    // {{{ open fifo here (fail early or something)
+    // {{{ open fifo here
     if (mkfifo(idf, 420) < 0) {
         close(ptm);
         close(pts);
@@ -331,7 +326,7 @@ int spawn(char* argv[], char const* idf, struct termios const* tio, struct winsi
     }
     // }}}
 
-    // {{{ setup for a daemon fork, with pts as controlling (hence double fork not needed)
+    // {{{ setup for a daemon fork, with pts as controlling
     signal(SIGHUP, SIG_IGN); // ignore being detached from tty
 
     log("server: new session");
@@ -374,6 +369,10 @@ int spawn(char* argv[], char const* idf, struct termios const* tio, struct winsi
     close(pts);
 
     server(ptm, fifo, cpid);
+
+    unlink(idf);
+    exit(EXIT_SUCCESS);
+
     return -1; // unreachable
 }
 
