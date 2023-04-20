@@ -22,11 +22,12 @@ finally:
 static int sock = -1;
 static bool is_raw = false;
 static struct termios prev_tio;
+
 /// cleanup SIGINT handler
 static void cleanup(int sign) {
   close(sock);
   if (is_raw) tcsetattr(STDERR_FILENO, TCSANOW, &prev_tio);
-  // YYY: do i need to restore the winsize too? i had some awkward results...
+  // TODO: leave alt screen if entered (and other states that i dont know of)
   if (sign) _exit(0);
 }
 
