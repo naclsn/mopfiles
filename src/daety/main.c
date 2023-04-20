@@ -15,20 +15,26 @@ void _die() {
 }
 
 int main(int argc, char** argv) {
-  if (1 == argc) {
-    printf("Usage: %s <prog> <args...>\n", argv[0]);
+  char const* prog = *argv++;
+  if (0 == --argc || 0 == strcmp("--help", *argv) || 0 == strcmp("-h", *argv)) {
+    printf("Usage: %s [--client|--server] <prog> <args...>\n", prog);
     exit(EXIT_FAILURE);
   }
 
+  bool is_client = 0 == strcmp("--client", *argv);
+  bool is_server = 0 == strcmp("--server", *argv);
+
+  if (is_client || is_server) argv++;
+
+  // TODO: from prog+args or option, also enable non-local sockets
   const char* name = "me";
 
-  if (0 == strcmp("client", argv[1])) {
-    puts("starting client");
+  if (is_client) {
     client(name);
-  } else if (0 == strcmp("server", argv[1])) {
-    puts("starting server");
-    server(name);
+  } else if (is_server) {
+    server(name, argv);
+  } else {
+    puts("TODO: fork and stuff");
+    return 95;
   }
-
-  puts("done");
 }
