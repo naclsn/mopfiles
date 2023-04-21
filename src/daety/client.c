@@ -44,8 +44,10 @@ int parse_key(char const* ser, char* de) {
 }
 
 void client(char const* name, char const* leader_key) {
-  int leader_len = parse_key(leader_key ? leader_key : "^@", leader);
+  int leader_len = parse_key(leader_key ? leader_key : "^[^[", leader);
   bool leader_found = false;
+
+  // TODO(winsize): capture window size change signal, update server on it
 
   setup_cleanup();
   
@@ -99,9 +101,12 @@ void client(char const* name, char const* leader_key) {
           case CTRL('D'):
             goto finally;
 
-          case CTRL('Z'): // something to prevent socket over buffering?
-            try(r, raise(SIGTSTP));
-            break;
+          // case CTRL('Z'):
+          //   // something to prevent socket over buffering?
+          //   // TODO(winsize): have server update winsize
+          //   // (both of these can be solved by closing the socket and re-opening it later...)
+          //   try(r, raise(SIGTSTP));
+          //   break;
 
           default:
             // not for me, forward all (re-prefix leader)

@@ -1,0 +1,14 @@
+#!/bin/sh -e
+does() { echo "$@"; "$@"; }
+for f in *.[ch]
+  do if [ $f -nt daety ]
+    then
+      does cc main.c client.c server.c -DVERS=0.1.0-`git rev-parse --short HEAD 2>/dev/null` -o daety -Wall -Wextra -pedantic
+      break
+  fi
+done
+if [ run = $1 ]
+  then
+    shift
+    does exec ./daety "$@"
+fi
