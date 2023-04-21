@@ -27,11 +27,26 @@ static struct termios prev_tio;
 static void cleanup(int sign) {
   close(sock);
   if (is_raw) tcsetattr(STDERR_FILENO, TCSANOW, &prev_tio);
-  // TODO: leave alt screen if entered (and other states that i dont know of)
+  // YYY: reset the terminal, this should be enough most of the time
+  // NOTE: could track at least if it is in alt screen, ie. sometime we don't want to reset
+  write(STDOUT_FILENO, "\033c", 2);
   if (sign) _exit(0);
 }
 
-void client(char const* name) {
+static char leader[8];
+
+/// convert ^x sequences (for now thats pretty much it, ^ itself cannot be used)
+int parse_key(char const* ser, char* de) {
+  int r = 1;
+  do { *de++ = '^' == *ser ? CTRL(*++ser) : *ser; }
+  while (*++ser && ++r < 8);
+  return r;
+}
+
+void client(char const* name, char const* leader_key) {
+  int leader_len = parse_key(leader_key ? leader_key : "^@", leader);
+  bool leader_found = false;
+
   setup_cleanup();
   
   // sleep(3); // ZZZ
@@ -41,11 +56,8 @@ void client(char const* name) {
   struct termios tio;
   try(r, tcgetattr(STDERR_FILENO, &tio));
 
-  // TODO: option to have it not raw (plays better with buffering
-  //       and thus could be preferable in some situations)
-  // NOTE: it will still have -echo
-  // NOTE: because of raw, ^D/^C/^Z.. are sent to the program, not the client
-  //       this could be approached the classic way of "leader key", but i don't like it much..
+  // TODO(term/opts): option to have it not raw (plays better with buffering and thus
+  //                  could be preferable in some situations) ((will still have -echo))
   prev_tio = tio;
   cfmakeraw(&tio);
   try(r, tcsetattr(STDERR_FILENO, TCSANOW, &tio));
@@ -64,6 +76,8 @@ void client(char const* name) {
   };
   fds[IDX_SOCK].fd = sock;
 
+  char buf[BUF_SIZE];
+  int len;
   while (1) {
     int n;
     try(n, poll(fds, 2, -1));
@@ -71,21 +85,47 @@ void client(char const* name) {
     // server stopped (eg. program terminated)
     if (POLLHUP & fds[IDX_SOCK].revents) break;
 
-    char buf[BUF_SIZE];
-    int len;
-
     // user input
     if (POLLIN & fds[IDX_USER].revents) {
-      try(len, read(fds[IDX_USER].fd, buf, BUF_SIZE));
+      try(len, read(STDIN_FILENO, buf, BUF_SIZE));
       if (0 == len) break;
-      try(r, write(fds[IDX_SOCK].fd, buf, len));
+
+      // handle leader key
+      if (leader_found) {
+        switch (buf[0]) {
+          case CTRL('C'): // ^C also kill server?
+            try(r, raise(SIGINT));
+
+          case CTRL('D'):
+            goto finally;
+
+          case CTRL('Z'): // something to prevent socket over buffering?
+            try(r, raise(SIGTSTP));
+            break;
+
+          default:
+            // not for me, forward all (re-prefix leader)
+            memmove(buf+leader_len, buf, len);
+            memcpy(buf, leader, leader_len);
+            leader_found = false;
+        }
+      } else {
+        // YYY: in raw mode, `buf` will contain exactly the sequence, so this does it for now
+        leader_found = is_raw && 0 == memcmp(leader, buf, leader_len);
+
+        // TODO(term): when not raw (if ever)
+        // try(r, write(sock, buf, .. up to leader));
+        // try(r, write(sock, buf, from after key past leader ..));
+      }
+
+      if (!leader_found) try(r, write(sock, buf, len));
     }
 
     // program output
     if (POLLIN & fds[IDX_SOCK].revents) {
-      try(len, read(fds[IDX_SOCK].fd, buf, BUF_SIZE));
+      try(len, read(sock, buf, BUF_SIZE));
       if (0 == len) break;
-      try(r, write(fds[IDX_USER].fd, buf, len));
+      try(r, write(STDOUT_FILENO, buf, len));
     }
   } // while (poll)
 

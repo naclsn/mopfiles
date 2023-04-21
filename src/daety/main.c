@@ -26,11 +26,11 @@ int main(int argc, char** argv) {
 
   if (is_client || is_server) argv++;
 
-  // TODO: from prog+args or option, also enable non-local sockets
+  // TODO(opts): from prog+args or option, also enable non-local sockets
   const char* name = "me";
 
   if (is_client) {
-    client(name);
+    client(name, NULL); // TODO(opts): client leader key
   } else if (is_server) {
     server(name, argv);
   } else {

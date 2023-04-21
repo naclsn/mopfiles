@@ -38,7 +38,7 @@ static void cleanup(int sign) {
     close(fds[k].fd);
   if (crap_name) unlink(crap_name);
   if (sign) kill(cpid, SIGTERM);
-  // TODO: send exit code to clients
+  // TODO(exitcode): send exit code to clients (but how? not through the socket!)
   waitpid(cpid, NULL, 0);
   if (sign) _exit(0);
 }
@@ -122,14 +122,22 @@ void server(char const* name, char** args) {
         }
 
         if (i-IDX_CLIS == curr_ws) {
-          // find new smaller size
-          curr_ws = 0;
-          for (int k = 1; k < fds_count-IDX_CLIS; k++) {
-            if (wss[k].ws_col < wss[curr_ws].ws_col && wss[k].ws_row < wss[curr_ws].ws_row)
-              curr_ws = k;
+          if (IDX_CLIS < fds_count) {
+            // find new smaller size
+            curr_ws = 0;
+            for (int k = 1; k < fds_count-IDX_CLIS; k++) {
+              if (wss[k].ws_col < wss[curr_ws].ws_col && wss[k].ws_row < wss[curr_ws].ws_row)
+                curr_ws = k;
+            }
+            printf("server: new size %dx%d\n", wss[curr_ws].ws_col, wss[curr_ws].ws_row);
+            try(r, ioctl(fds[IDX_TERM].fd, TIOCSWINSZ, wss+curr_ws));
+          } else {
+            // use a 'standard' 80x24
+            curr_ws = -1;
+            struct winsize ws = {.ws_col= 80, .ws_row= 24};
+            printf("server: 'standard' size %dx%d\n", ws.ws_col, ws.ws_row);
+            try(r, ioctl(fds[IDX_TERM].fd, TIOCSWINSZ, &ws));
           }
-          printf("server: new size %dx%d\n", wss[curr_ws].ws_col, wss[curr_ws].ws_row);
-          try(r, ioctl(fds[IDX_TERM].fd, TIOCSWINSZ, wss+curr_ws));
         }
       }
     } // for (clients)
@@ -156,6 +164,8 @@ void server(char const* name, char** args) {
       // echo back to every clients
       for (int j = IDX_CLIS; j < fds_count; j++)
         try(r, write(fds[j].fd, buf, len));
+
+      // TODO(alt): here track entring alt
     }
 
     // new incoming connection
@@ -178,7 +188,7 @@ void server(char const* name, char** args) {
           try(r, ioctl(fds[IDX_TERM].fd, TIOCSWINSZ, ws));
         }
 
-        // TODO: enter alt screen if needed (and other states that i dont know of)
+        // TODO(alt): enter alt screen if needed (and other states that i dont know of)
 
         pfd->events = POLLIN;
         fds_count++;
