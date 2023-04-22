@@ -12,17 +12,19 @@ Usage: ./daety [opts] <prog> [<args...>]
 --version            show build the version
 
 shared client/server:
---id      -i <id>    the default id is '<prog> <args...>'
+--id      -i <id>    the default is form prog and args
 (TODO: socket options)
 
 server only:
 --server  -s         starts only the server
+--verbose            (only when -s)
 
 client only:
 --key     -k <key>   use the following leader key
 --cmd     -c <keys..> --
                      send the sequence upon connection
-                     must be terminated with `--`
+                     must be terminated with --
+                     ^x are translated to controls
 --cooked             do not set raw mode
 ```
 
@@ -49,12 +51,12 @@ is recognised as ending the options.
 `--id/-i` can be used to identify a server not by
 the combination of arguments. A server can be started
 explicitely with `--server/-s`. It will then not be
-a daemon.
+a daemon. IDs have a max length of 1019.
 
 Client can be specified a 'leader key' with `--key/-k`.
 The `^` notation is used (for example esc is `^[`, see
-`showkey -a`). The default is `^[^[` (ie. alt+esc). The
-leader key is used to talk with the client itself:
+`showkey -a`). The default is `^\`. The leader key is used
+to talk with the client itself:
  - `<key>^C`: terminate the server, close the client
  - `<key>^D`: close the client, keep the server
  - `<key>^Z`: pause the client (SIGTSTP) -- not implemented

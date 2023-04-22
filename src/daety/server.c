@@ -54,7 +54,7 @@ static pid_t fork_program(char** args) {
 
   // child (program)
   if (0 != strcmp("crap", args[0]))
-  try(cpid, execvp(args[0], args));
+  try(cpid, execvp(args[0], args)); // TODO: better handle program not found (ie. earlier..?)
 
   // simpler thing for testing
   char buf[BUF_SIZE];
@@ -76,7 +76,7 @@ finally:
   return -1;
 }
 
-void server(char const* name, char** args) {
+void server(char const* name, char** args, bool verbose) {
   cpid = fork_program(args);
 
   setup_cleanup();
@@ -88,7 +88,7 @@ void server(char const* name, char** args) {
   fds[IDX_SOCK].events = POLLIN;
   fds_count = IDX_CLIS;
 
-  puts("server: listening");
+  if (verbose) puts("server: listening");
 
   char buf[BUF_SIZE];
   int len;
@@ -103,7 +103,7 @@ void server(char const* name, char** args) {
       // client got input
       if (!remove && POLLIN & fds[i].revents) {
         try(len, read(fds[i].fd, buf, BUF_SIZE));
-        printf("<%d> (%dB)\n", fds[i].fd, len);
+        if (verbose) printf("<%d> (%dB)\n", fds[i].fd, len);
         remove = 0 == len;
 
         // program input
@@ -112,7 +112,7 @@ void server(char const* name, char** args) {
 
       // client was closed
       if (remove) {
-        printf("server: -%d\n", fds[i].fd);
+        if (verbose) printf("server: -%d\n", fds[i].fd);
         close(fds[i].fd);
 
         fds_count--;
@@ -129,13 +129,13 @@ void server(char const* name, char** args) {
               if (wss[k].ws_col < wss[curr_ws].ws_col && wss[k].ws_row < wss[curr_ws].ws_row)
                 curr_ws = k;
             }
-            printf("server: new size %dx%d\n", wss[curr_ws].ws_col, wss[curr_ws].ws_row);
+            if (verbose) printf("server: new size %dx%d\n", wss[curr_ws].ws_col, wss[curr_ws].ws_row);
             try(r, ioctl(fds[IDX_TERM].fd, TIOCSWINSZ, wss+curr_ws));
           } else {
             // use a 'standard' 80x24
             curr_ws = -1;
             struct winsize ws = {.ws_col= 80, .ws_row= 24};
-            printf("server: 'standard' size %dx%d\n", ws.ws_col, ws.ws_row);
+            if (verbose) printf("server: 'standard' size %dx%d\n", ws.ws_col, ws.ws_row);
             try(r, ioctl(fds[IDX_TERM].fd, TIOCSWINSZ, &ws));
           }
         }
@@ -144,7 +144,7 @@ void server(char const* name, char** args) {
 
     // progam is done
     if (POLLHUP & fds[IDX_TERM].revents) {
-      puts("server: program done");
+      if (verbose) puts("server: program done");
       break;
     }
 
@@ -153,11 +153,11 @@ void server(char const* name, char** args) {
     //       discard program output? or terminate on last disconnect?
     if (POLLIN & fds[IDX_TERM].revents && IDX_CLIS < fds_count) {
       try(len, read(fds[IDX_TERM].fd, buf, BUF_SIZE));
-      printf("<prog> (%dB)\n", len);
+      if (verbose) printf("<prog> (%dB)\n", len);
 
       // progam is done (eof)
       if (0 == len) {
-        puts("server: program done (eof)");
+        if (verbose) puts("server: program done (eof)");
         break;
       }
 
@@ -174,16 +174,16 @@ void server(char const* name, char** args) {
       struct winsize* ws = wss+fds_count-IDX_CLIS;
 
       try(pfd->fd, accept(fds[IDX_SOCK].fd, NULL, NULL));
-      printf("server: +%d\n", pfd->fd);
+      if (verbose) printf("server: +%d\n", pfd->fd);
 
       // receive new size to adopt
       try(len, recv(pfd->fd, ws, sizeof *ws, MSG_WAITALL));
 
       // sync or abort and close on failure
       if (sizeof *ws == len) {
-        printf("server: %dx%d\n", ws->ws_col, ws->ws_row);
+        if (verbose) printf("server: %dx%d\n", ws->ws_col, ws->ws_row);
         if (-1 == curr_ws || (ws->ws_col < wss[curr_ws].ws_col && ws->ws_row < wss[curr_ws].ws_row)) {
-          printf("server: new size %dx%d\n", ws->ws_col, ws->ws_row);
+          if (verbose) printf("server: new size %dx%d\n", ws->ws_col, ws->ws_row);
           curr_ws = fds_count-IDX_CLIS;
           try(r, ioctl(fds[IDX_TERM].fd, TIOCSWINSZ, ws));
         }
@@ -193,7 +193,7 @@ void server(char const* name, char** args) {
         pfd->events = POLLIN;
         fds_count++;
       } else {
-        puts("server: aborting connection");
+        if (verbose) puts("server: aborting connection");
         close(pfd->fd);
       }
     }

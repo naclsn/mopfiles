@@ -43,8 +43,8 @@ int parse_key(char const* ser, char* de) {
   return r;
 }
 
-void client(char const* name, char const* leader_key) {
-  int leader_len = parse_key(leader_key ? leader_key : "^[^[", leader);
+void client(char const* name, char const* leader_key, char const* send_sequence, bool skip_raw) {
+  int leader_len = parse_key(leader_key, leader);
   bool leader_found = false;
 
   // TODO(winsize): capture window size change signal, update server on it
@@ -58,17 +58,22 @@ void client(char const* name, char const* leader_key) {
   struct termios tio;
   try(r, tcgetattr(STDERR_FILENO, &tio));
 
-  // TODO(term/opts): option to have it not raw (plays better with buffering and thus
-  //                  could be preferable in some situations) ((will still have -echo))
-  prev_tio = tio;
-  cfmakeraw(&tio);
-  try(r, tcsetattr(STDERR_FILENO, TCSANOW, &tio));
-  is_raw = true;
+  if (!skip_raw) {
+    prev_tio = tio;
+    cfmakeraw(&tio);
+    try(r, tcsetattr(STDERR_FILENO, TCSANOW, &tio));
+    is_raw = true;
+  }
 
   // send size to server
   struct winsize ws;
   try(r, ioctl(STDERR_FILENO, TIOCGWINSZ, &ws));
   try(r, write(sock, &ws, sizeof ws));
+
+  if (send_sequence) {
+    // TODO(--cmd): multi-args and ^x sequences
+    try(r, write(sock, send_sequence, strlen(send_sequence)));
+  }
 
 #define IDX_USER 0
 #define IDX_SOCK 1
