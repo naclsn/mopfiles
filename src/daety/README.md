@@ -32,7 +32,7 @@ client only:
 $ ./daety vi # in one terminal
 ... (vi)
 
-$ ./daety -c :e README.md ^M -- vi # in another terminal
+$ ./daety -c ':redr!|e' README.md ^M -- vi # in another terminal
 ... (same vi)
 ```
 

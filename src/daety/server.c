@@ -31,6 +31,7 @@ static int fds_count = 0;
 static pid_t cpid = 0;
 static struct winsize wss[IDX_COUNT-IDX_CLIS];
 static int curr_ws = -1;
+static bool is_alt = false;
 
 /// cleanup SIGINT handler
 static void cleanup(int sign) {
@@ -76,6 +77,17 @@ finally:
   return -1;
 }
 
+/// output using ^x sequences
+static void putesc(char const* buf, int len) {
+  do {
+    if (*buf < 0x20) {
+      putchar('^');
+      putchar(*buf | 0x40);
+    } else putchar(*buf);
+    buf++;
+  } while (--len);
+}
+
 void server(char const* name, char** args, bool verbose) {
   cpid = fork_program(args);
 
@@ -103,7 +115,11 @@ void server(char const* name, char** args, bool verbose) {
       // client got input
       if (!remove && POLLIN & fds[i].revents) {
         try(len, read(fds[i].fd, buf, BUF_SIZE));
-        if (verbose) printf("<%d> (%dB)\n", fds[i].fd, len);
+        if (verbose) {
+          printf("<%d> (%dB) ", fds[i].fd, len);
+          //putesc(buf, len); // extra verbose
+          putchar('\n');
+        }
         remove = 0 == len;
 
         // program input
@@ -151,9 +167,13 @@ void server(char const* name, char** args, bool verbose) {
     // program output (only if there are clients listening)
     // TODO: how should it behave, stay alive even if no client?
     //       discard program output? or terminate on last disconnect?
-    if (POLLIN & fds[IDX_TERM].revents && IDX_CLIS < fds_count) {
+    if (POLLIN & fds[IDX_TERM].revents /*&& IDX_CLIS < fds_count*/) {
       try(len, read(fds[IDX_TERM].fd, buf, BUF_SIZE));
-      if (verbose) printf("<prog> (%dB)\n", len);
+      if (verbose) {
+        printf("<prog> (%dB) ", len);
+        //putesc(buf, len); // extra verbose
+        putchar('\n');
+      }
 
       // progam is done (eof)
       if (0 == len) {
@@ -165,7 +185,19 @@ void server(char const* name, char** args, bool verbose) {
       for (int j = IDX_CLIS; j < fds_count; j++)
         try(r, write(fds[j].fd, buf, len));
 
-      // TODO(alt): here track entring alt
+      // scan for enter/leave alt
+      char const* found = buf-1;
+      int rest = len;
+      while (0 < rest && NULL != (found = memchr(found+1, *ESC, rest))) {
+        rest-= found-buf;
+        if (!is_alt && 0 == memcmp(TERM_SMCUP, found+1, strlen(TERM_SMCUP))) {
+          if (verbose) puts("server: entering alt");
+          is_alt = true;
+        } else if (is_alt && 0 == memcmp(TERM_RMCUP, found+1, strlen(TERM_RMCUP))) {
+          if (verbose) puts("server: leaving alt");
+          is_alt = false;
+        }
+      }
     }
 
     // new incoming connection
@@ -188,7 +220,10 @@ void server(char const* name, char** args, bool verbose) {
           try(r, ioctl(fds[IDX_TERM].fd, TIOCSWINSZ, ws));
         }
 
-        // TODO(alt): enter alt screen if needed (and other states that i dont know of)
+        // enter alt screen if needed (and other term states that i dont know of)
+        if (is_alt) {
+          try(r, write(pfd->fd, ESC TERM_SMCUP, strlen(ESC TERM_SMCUP)));
+        }
 
         pfd->events = POLLIN;
         fds_count++;

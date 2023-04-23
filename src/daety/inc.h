@@ -21,6 +21,12 @@
 #include <termios.h>
 #include <unistd.h>
 
+// these should be enough most of the time
+#define ESC "\033"
+#define TERM_RESET "c"
+#define TERM_SMCUP "[?1049h"
+#define TERM_RMCUP "[?1049l"
+
 extern char const* errfile;
 extern unsigned int errline;
 extern char const* errmsg;

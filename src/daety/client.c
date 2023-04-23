@@ -22,21 +22,23 @@ finally:
 static int sock = -1;
 static bool is_raw = false;
 static struct termios prev_tio;
+static bool is_alt = false;
 
 /// cleanup SIGINT handler
 static void cleanup(int sign) {
   close(sock);
   if (is_raw) tcsetattr(STDERR_FILENO, TCSANOW, &prev_tio);
-  // YYY: reset the terminal, this should be enough most of the time
-  // NOTE: could track at least if it is in alt screen, ie. sometime we don't want to reset
-  write(STDOUT_FILENO, "\033c", 2);
+  if (is_alt) {
+    write(STDOUT_FILENO, ESC TERM_RMCUP, 2);
+    write(STDOUT_FILENO, ESC TERM_RESET, 2);
+  }
   if (sign) _exit(0);
 }
 
 static char leader[8];
 
 /// convert ^x sequences (for now thats pretty much it, ^ itself cannot be used)
-int parse_key(char const* ser, char* de) {
+static int parse_key(char const* ser, char* de) {
   int r = 1;
   do { *de++ = '^' == *ser ? CTRL(*++ser) : *ser; }
   while (*++ser && ++r < 8);
@@ -120,7 +122,7 @@ void client(char const* name, char const* leader_key, char const* send_sequence,
             leader_found = false;
         }
       } else {
-        // YYY: in raw mode, `buf` will contain exactly the sequence, so this does it for now
+        // in raw mode, `buf` will contain exactly the sequence, so this does it for now
         leader_found = is_raw && 0 == memcmp(leader, buf, leader_len);
 
         // TODO(term): when not raw (if ever)
@@ -135,6 +137,18 @@ void client(char const* name, char const* leader_key, char const* send_sequence,
     if (POLLIN & fds[IDX_SOCK].revents) {
       try(len, read(sock, buf, BUF_SIZE));
       if (0 == len) break;
+
+      // scan for enter/leave alt
+      char const* found = buf-1;
+      int rest = len;
+      while (0 < rest && NULL != (found = memchr(found+1, *ESC, rest))) {
+        rest-= found-buf;
+        if (!is_alt && 0 == memcmp(TERM_SMCUP, found+1, strlen(TERM_SMCUP)))
+          is_alt = true;
+        else if (is_alt && 0 == memcmp(TERM_RMCUP, found+1, strlen(TERM_RMCUP)))
+          is_alt = false;
+      }
+
       try(r, write(STDOUT_FILENO, buf, len));
     }
   } // while (poll)
