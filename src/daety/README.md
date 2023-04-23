@@ -23,6 +23,7 @@ client only:
 --key     -k <key>   use the following leader key
 --cmd     -c <keys..> --
                      send the sequence upon connection
+                     joined with not separator
                      must be terminated with --
                      ^x are translated to controls
 --cooked             do not set raw mode
@@ -32,7 +33,7 @@ client only:
 $ ./daety vi # in one terminal
 ... (vi)
 
-$ ./daety -c ':redr!|e' README.md ^M -- vi # in another terminal
+$ ./daety -c '^[^[:redr!|e ' README.md ^M -- vi # in another terminal
 ... (same vi)
 ```
 

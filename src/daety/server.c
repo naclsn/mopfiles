@@ -39,7 +39,7 @@ static void cleanup(int sign) {
     close(fds[k].fd);
   if (crap_name) unlink(crap_name);
   if (sign) kill(cpid, SIGTERM);
-  // TODO(exitcode): send exit code to clients (but how? not through the socket!)
+  // TODO(exitcode): send exit code to clients (?)
   waitpid(cpid, NULL, 0);
   if (sign) _exit(0);
 }

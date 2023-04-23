@@ -38,15 +38,15 @@ static void cleanup(int sign) {
 static char leader[8];
 
 /// convert ^x sequences (for now thats pretty much it, ^ itself cannot be used)
-static int parse_key(char const* ser, char* de) {
+static int parse_key(char const* ser, char* de, int max_len) {
   int r = 1;
   do { *de++ = '^' == *ser ? CTRL(*++ser) : *ser; }
-  while (*++ser && ++r < 8);
+  while (*++ser && ++r < max_len);
   return r;
 }
 
-void client(char const* name, char const* leader_key, char const* send_sequence, bool skip_raw) {
-  int leader_len = parse_key(leader_key, leader);
+void client(char const* name, char const* leader_key, char** send_sequence, int sequence_len, bool skip_raw) {
+  int leader_len = parse_key(leader_key, leader, 8);
   bool leader_found = false;
 
   // TODO(winsize): capture window size change signal, update server on it
@@ -73,13 +73,16 @@ void client(char const* name, char const* leader_key, char const* send_sequence,
   try(r, write(sock, &ws, sizeof ws));
 
   if (send_sequence) {
-    // TODO(--cmd): multi-args and ^x sequences
-    try(r, write(sock, send_sequence, strlen(send_sequence)));
+    char buf[BUF_SIZE];
+    for (; 0 < sequence_len; sequence_len--, send_sequence++) {
+      int len = parse_key(*send_sequence, buf, BUF_SIZE);
+      try(r, write(sock, buf, len));
+    }
   }
 
 #define IDX_USER 0
 #define IDX_SOCK 1
-  static struct pollfd fds[2] = {
+  struct pollfd fds[2] = {
     {.fd= STDIN_FILENO, .events= POLLIN},
     {.fd= 0, .events= POLLIN},
   };

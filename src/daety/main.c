@@ -33,6 +33,7 @@ void usage(char const* self) {
     "--key     -k <key>   use the following leader key\n"
     "--cmd     -c <keys..> --\n"
     "                     send the sequence upon connection\n"
+    "                     joined with not separator\n"
     "                     must be terminated with --\n"
     "--cooked             do not set raw mode\n"
     , self
@@ -62,12 +63,21 @@ int main(int argc, char** argv) {
   bool is_server = false;
   bool is_verbose = false;
   char const* key = "^\\";
-  char const* cmd = NULL; // TODO(--cmd): spans multiple args (until --)
+  char** cmd = NULL;
+  int cmd_len = 0;
   bool is_cooked = false;
 
   // parse options
   while (argc && *argv) {
-    if ('-' == (*argv)[0]) {
+    if (NULL != cmd) {
+      if (argis("--")) {
+        argv++;
+        break;
+      }
+      cmd_len++;
+    }
+
+    else if ('-' == (*argv)[0]) {
       if ('-' == (*argv)[1]) {
         if (argis("--")) {
           argv++;
@@ -77,7 +87,7 @@ int main(int argc, char** argv) {
         else if (argis("--server"))  is_server = true;
         else if (argis("--verbose")) is_verbose = true;
         else if (argis("--key"))     key = *++argv;
-        else if (argis("--cmd"))     cmd = *++argv;
+        else if (argis("--cmd"))     cmd = argv;
         else if (argis("--cooked"))  is_cooked = true;
         else {
           printf("Unknown option: '%s'\n", *argv);
@@ -91,7 +101,7 @@ int main(int argc, char** argv) {
             case 'i': id = *++argv;     break;
             case 's': is_server = true; break;
             case 'k': key = *++argv;    break;
-            case 'c': cmd = *++argv;    break;
+            case 'c': cmd = argv;       break;
             default:
               printf("Unknown option: '-%c'\n", *c);
               return EXIT_FAILURE;
@@ -129,6 +139,8 @@ int main(int argc, char** argv) {
 
   // TODO: if server not exists fork and stuff
 
-  client(id, key, cmd, is_cooked);
+  if (cmd) cmd++; // at this point, `cmd` is still on '--cmd' or '-c'
+
+  client(id, key, cmd, cmd_len, is_cooked);
   return EXIT_SUCCESS;
 }
