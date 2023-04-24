@@ -53,12 +53,13 @@ extern void _die();
 
 #define BUF_SIZE 65535
 
-#define setup_cleanup()        \
-  struct sigaction sa;         \
-  sa.sa_handler = cleanup;     \
-  sigemptyset(&sa.sa_mask);    \
-  sa.sa_flags = SA_RESETHAND;  \
-  int r;                       \
-  try(r, sigaction(SIGINT, &sa, NULL))
+#define sig_handle(_sign, _fn, _flags) do {  \
+  struct sigaction sa;                       \
+  sa.sa_handler = _fn;                       \
+  sigemptyset(&sa.sa_mask);                  \
+  sa.sa_flags = _flags;                      \
+  int r;                                     \
+  try(r, sigaction(_sign, &sa, NULL));       \
+} while (0)
 
 #endif // _DATY_INC

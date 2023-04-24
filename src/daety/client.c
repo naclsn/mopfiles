@@ -27,33 +27,19 @@ static bool is_alt = false;
 /// cleanup SIGINT handler
 static void cleanup(int sign) {
   close(sock);
+
   if (is_raw) tcsetattr(STDERR_FILENO, TCSANOW, &prev_tio);
   if (is_alt) {
     write(STDOUT_FILENO, ESC TERM_RMCUP, 2);
     write(STDOUT_FILENO, ESC TERM_RESET, 2);
   }
+
   if (sign) _exit(0);
 }
 
-static char leader[8];
-
-/// convert ^x sequences (for now thats pretty much it, ^ itself cannot be used)
-static int parse_key(char const* ser, char* de, int max_len) {
-  int r = 1;
-  do { *de++ = '^' == *ser ? CTRL(*++ser) : *ser; }
-  while (*++ser && ++r < max_len);
-  return r;
-}
-
-void client(char const* name, char const* leader_key, char** send_sequence, int sequence_len, bool skip_raw) {
-  int leader_len = parse_key(leader_key, leader, 8);
-  bool leader_found = false;
-
-  // TODO(winsize): capture window size change signal, update server on it
-
-  setup_cleanup();
-  
-  // sleep(3); // ZZZ
+/// connect, set term raw and winsize to server
+static void init(char const* name, bool skip_raw) {
+  int r;
   sock = conx_local_socket(name);
 
   // set terminal into raw mode
@@ -71,6 +57,31 @@ void client(char const* name, char const* leader_key, char** send_sequence, int 
   struct winsize ws;
   try(r, ioctl(STDERR_FILENO, TIOCGWINSZ, &ws));
   try(r, write(sock, &ws, sizeof ws));
+
+  return;
+finally:
+  _die();
+}
+
+static char leader[8];
+
+/// convert ^x sequences (for now thats pretty much it, ^ itself cannot be used)
+static int parse_key(char const* ser, char* de, int max_len) {
+  int r = 1;
+  do { *de++ = '^' == *ser ? CTRL(*++ser) : *ser; }
+  while (*++ser && ++r < max_len);
+  return r;
+}
+
+void client(char const* name, char const* leader_key, char** send_sequence, int sequence_len, bool skip_raw) {
+  int r;
+  int leader_len = parse_key(leader_key, leader, 8);
+  bool leader_found = false;
+
+  sig_handle(SIGINT, cleanup, SA_RESETHAND);
+  // TODO(winsize): capture window size change signal, update server on it
+
+  init(name, skip_raw);
 
   if (send_sequence) {
     char buf[BUF_SIZE];
@@ -94,9 +105,6 @@ void client(char const* name, char const* leader_key, char** send_sequence, int 
     int n;
     try(n, poll(fds, 2, -1));
 
-    // server stopped (eg. program terminated)
-    if (POLLHUP & fds[IDX_SOCK].revents) break;
-
     // user input
     if (POLLIN & fds[IDX_USER].revents) {
       try(len, read(STDIN_FILENO, buf, BUF_SIZE));
@@ -111,12 +119,12 @@ void client(char const* name, char const* leader_key, char** send_sequence, int 
           case CTRL('D'):
             goto finally;
 
-          // case CTRL('Z'):
-          //   // something to prevent socket over buffering?
-          //   // TODO(winsize): have server update winsize
-          //   // (both of these can be solved by closing the socket and re-opening it later...)
-          //   try(r, raise(SIGTSTP));
-          //   break;
+          case CTRL('Z'):
+            cleanup(0); // FIXME: does not make it..
+            try(r, raise(SIGSTOP));
+            init(name, skip_raw);
+            leader_found = false;
+            continue;
 
           default:
             // not for me, forward all (re-prefix leader)
@@ -136,6 +144,8 @@ void client(char const* name, char const* leader_key, char** send_sequence, int 
       if (!leader_found) try(r, write(sock, buf, len));
     }
 
+    len = 0;
+    bool end = POLLHUP & fds[IDX_SOCK].revents;
     // program output
     if (POLLIN & fds[IDX_SOCK].revents) {
       try(len, read(sock, buf, BUF_SIZE));
@@ -152,11 +162,19 @@ void client(char const* name, char const* leader_key, char** send_sequence, int 
           is_alt = false;
       }
 
+      if (end) len--; // because in that case the last bytes is the exit code
       try(r, write(STDOUT_FILENO, buf, len));
+      if (end) len++;
     }
+
+    // server stopped (eg. program terminated)
+    if (end) break;
   } // while (poll)
 
 finally:
   cleanup(0);
   if (errdid) _die();
+
+  // program exit code should be the last byte sent if any
+  exit(len ? buf[len-1] : 0);
 }

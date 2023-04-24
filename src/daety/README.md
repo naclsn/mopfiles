@@ -17,6 +17,7 @@ shared client/server:
 
 server only:
 --server  -s         starts only the server
+--quiet   -q         (only when -s)
 --verbose            (only when -s)
 
 client only:
@@ -58,9 +59,9 @@ Client can be specified a 'leader key' with `--key/-k`.
 The `^` notation is used (for example esc is `^[`, see
 `showkey -a`). The default is `^\`. The leader key is used
 to talk with the client itself:
- - `<key>^C`: terminate the server, close the client
+ - `<key>^C`: ~~terminate the server, close the client~~ same as below
  - `<key>^D`: close the client, keep the server
- - `<key>^Z`: pause the client (SIGTSTP) -- not implemented
+ - `<key>^Z`: pause the client (SIGTSTP)
 
 By default, the client sets itself into raw mode, ie
 each key press is immediately sent to the server. To

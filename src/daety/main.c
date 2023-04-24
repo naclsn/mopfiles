@@ -27,6 +27,7 @@ void usage(char const* self) {
     "\n"
     "server only:\n"
     "--server  -s         starts only the server\n"
+    "--quiet   -q         (only when -s)\n"
     "--verbose            (only when -s)\n"
     "\n"
     "client only:\n"
@@ -35,6 +36,7 @@ void usage(char const* self) {
     "                     send the sequence upon connection\n"
     "                     joined with not separator\n"
     "                     must be terminated with --\n"
+    "                     ^x are translated to controls\n"
     "--cooked             do not set raw mode\n"
     , self
   );
@@ -62,6 +64,7 @@ int main(int argc, char** argv) {
   char const* id = NULL;
   bool is_server = false;
   bool is_verbose = false;
+  bool is_quiet = false;
   char const* key = "^\\";
   char** cmd = NULL;
   int cmd_len = 0;
@@ -86,6 +89,7 @@ int main(int argc, char** argv) {
         else if (argis("--id"))      id = *++argv;
         else if (argis("--server"))  is_server = true;
         else if (argis("--verbose")) is_verbose = true;
+        else if (argis("--quiet"))   is_quiet = true;
         else if (argis("--key"))     key = *++argv;
         else if (argis("--cmd"))     cmd = argv;
         else if (argis("--cooked"))  is_cooked = true;
@@ -100,6 +104,7 @@ int main(int argc, char** argv) {
           switch (*c) {
             case 'i': id = *++argv;     break;
             case 's': is_server = true; break;
+            case 'q': is_quiet = true;  break;
             case 'k': key = *++argv;    break;
             case 'c': cmd = argv;       break;
             default:
@@ -119,6 +124,12 @@ int main(int argc, char** argv) {
     return EXIT_FAILURE;
   }
 
+  // // TODO:
+  // if (!exists(argv[0])) {
+  //   printf("Program not found: '%s'\n", argv[0]);
+  //   return EXIT_FAILURE;
+  // }
+
   char id_buf[1024] = "/tmp/daety-";
   if (NULL == id) {
     // NOTE: it uses all of prog and args, maybe just the prog is enough?
@@ -133,7 +144,7 @@ int main(int argc, char** argv) {
   id = id_buf;
 
   if (is_server) {
-    server(id, argv, is_verbose);
+    server(id, argv, is_verbose, is_quiet);
     return EXIT_SUCCESS;
   }
 
