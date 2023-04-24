@@ -35,22 +35,41 @@ static bool is_alt = false;
 
 /// cleanup SIGINT handler
 static void cleanup(int sign) {
+  #define lastsay(_c) write(STDOUT_FILENO, "server: " _c "\n", strlen("server: " _c "\n"));
+
+  lastsay("cleaning");
   if (crap_name) unlink(crap_name);
 
-  if (sign) kill(cpid, SIGTERM);
+  if (sign) {
+    lastsay("terminating program (1s)");
+    kill(cpid, SIGTERM);
+    sleep(1);
+  }
+
   // get exit code
   int wst;
   char code = 0;
-  waitpid(cpid, &wst, 0);
-  if (WIFEXITED(wst))
-    code = WEXITSTATUS(wst);
+  if (0 == waitpid(cpid, &wst, WNOHANG)) {
+    lastsay("program is not stopping.. waiting");
+    kill(cpid, SIGTERM);
+    sleep(3);
+    // try again before escalating
+    if (0 == waitpid(cpid, &wst, WNOHANG)) {
+      lastsay("program still not stopping, killing");
+      kill(cpid, SIGKILL);
+      waitpid(cpid, &wst, 0);
+    }
+  }
+  if (WIFEXITED(wst)) code = WEXITSTATUS(wst);
 
+  lastsay("closing connections")
   for (int k = 0; k < fds_count; k++) {
     // send exit code to client
     write(fds[k].fd, &code, 1);
     close(fds[k].fd);
   }
 
+  lastsay("done");
   if (sign) _exit(0);
 }
 
@@ -85,6 +104,9 @@ static void putesc(char const* buf, int len) {
 void server(char const* name, char** args, bool verbose, bool quiet) {
   int r;
   cpid = fork_program(args);
+
+  sig_handle(SIGINT, cleanup, SA_RESETHAND);
+  sig_handle(SIGTERM, cleanup, SA_RESETHAND);
 
   fds[IDX_TERM].events = POLLIN;
 
