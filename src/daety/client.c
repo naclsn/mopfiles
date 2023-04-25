@@ -93,12 +93,8 @@ static void init(char const* name, bool skip_raw) {
     is_raw = true;
   }
 
-  // send size to server TODO/FIXME: this is not a solution, use the [=w;hw one instead
-  struct winsize ws;
-  try(r, ioctl(STDERR_FILENO, TIOCGWINSZ, &ws));
-  try(r, write(sock, &ws, sizeof ws));
-  // TODO/FIXME: simply
-  //winch(0);
+  // send size to server
+  winch(0);
 
   return;
 finally:

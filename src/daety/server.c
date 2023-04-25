@@ -90,6 +90,28 @@ finally:
   return -1;
 }
 
+/// update the term winsize and curr_ws (fails if ioctl does)
+static int update_winsize(bool quiet) {
+  if (IDX_CLIS < fds_count) {
+    // find new smaller size
+    int new_ws = 0;
+    for (int k = 1; k < fds_count-IDX_CLIS; k++) {
+      if (wss[k].ws_col < wss[new_ws].ws_col || wss[k].ws_row < wss[new_ws].ws_row)
+        new_ws = k;
+    }
+    if (new_ws == curr_ws) return 0;
+    curr_ws = new_ws;
+    if (!quiet) printf("server: new size %dx%d\n", wss[curr_ws].ws_col, wss[curr_ws].ws_row);
+    return ioctl(fds[IDX_TERM].fd, TIOCSWINSZ, wss+curr_ws);
+  } else {
+    // use a 'standard' 80x24
+    curr_ws = -1;
+    struct winsize ws = {.ws_col= 80, .ws_row= 24};
+    if (!quiet) printf("server: 'standard' size %dx%d\n", ws.ws_col, ws.ws_row);
+    return ioctl(fds[IDX_TERM].fd, TIOCSWINSZ, &ws);
+  }
+}
+
 /// output using ^x sequences
 static void putesc(char const* buf, int len) {
   do {
@@ -173,15 +195,12 @@ void server(char const* name, char** args, bool verbose, bool quiet) {
 
               wss[i-IDX_CLIS].ws_col = w;
               wss[i-IDX_CLIS].ws_row = h;
-              if (i-IDX_CLIS == curr_ws || w < wss[curr_ws].ws_col || h < wss[curr_ws].ws_row) {
-                if (!quiet) printf("server: new size %dx%d\n", w, h);
-                curr_ws = i-IDX_CLIS;
-                try(r, ioctl(fds[IDX_TERM].fd, TIOCSWINSZ, &wss[curr_ws]));
-              }
+              update_winsize(quiet);
 
               // splice the sequence out of buf
               len-= found-start;
               memmove((void*)start, found, rest);
+              found = start;
             } // if CUSTOM_TERM_WINSIZE
           } // while scan for ESC
 
@@ -201,24 +220,7 @@ void server(char const* name, char** args, bool verbose, bool quiet) {
           wss[j-IDX_CLIS] = wss[j-IDX_CLIS+1];
         }
 
-        if (i-IDX_CLIS == curr_ws) {
-          if (IDX_CLIS < fds_count) {
-            // find new smaller size
-            curr_ws = 0;
-            for (int k = 1; k < fds_count-IDX_CLIS; k++) {
-              if (wss[k].ws_col < wss[curr_ws].ws_col || wss[k].ws_row < wss[curr_ws].ws_row)
-                curr_ws = k;
-            }
-            if (!quiet) printf("server: new size %dx%d\n", wss[curr_ws].ws_col, wss[curr_ws].ws_row);
-            try(r, ioctl(fds[IDX_TERM].fd, TIOCSWINSZ, wss+curr_ws));
-          } else {
-            // use a 'standard' 80x24
-            curr_ws = -1;
-            struct winsize ws = {.ws_col= 80, .ws_row= 24};
-            if (!quiet) printf("server: 'standard' size %dx%d\n", ws.ws_col, ws.ws_row);
-            try(r, ioctl(fds[IDX_TERM].fd, TIOCSWINSZ, &ws));
-          }
-        }
+        if (i-IDX_CLIS == curr_ws) try(r, update_winsize(quiet));
       } // if remove
     } // for (clients)
 
@@ -264,35 +266,24 @@ void server(char const* name, char** args, bool verbose, bool quiet) {
 
     // new incoming connection
     if (POLLIN & fds[IDX_SOCK].revents) {
-      struct pollfd* pfd = fds+fds_count;
-      struct winsize* ws = wss+fds_count-IDX_CLIS;
+      int cli;
+      try(cli, accept(fds[IDX_SOCK].fd, NULL, NULL));
+      if (!quiet) printf("server: +%d\n", cli);
 
-      try(pfd->fd, accept(fds[IDX_SOCK].fd, NULL, NULL));
-      if (!quiet) printf("server: +%d\n", pfd->fd);
+      fds[fds_count].fd = cli;
+      fds[fds_count].events = POLLIN;
 
-      // receive new size to adopt TODO/FIXME: see equivalent on client side: this is not a solution
-      try(len, recv(pfd->fd, ws, sizeof *ws, MSG_WAITALL));
+      // init winsize for this client
+      if (-1 == curr_ws) {
+        curr_ws = fds_count-IDX_CLIS;
+        wss[curr_ws].ws_col = 80;
+        wss[curr_ws].ws_row = 24;
+      } else wss[fds_count-IDX_CLIS] = wss[curr_ws];
 
-      // sync or abort and close on failure
-      if (sizeof *ws == len) {
-        if (!quiet) printf("server: %dx%d\n", ws->ws_col, ws->ws_row);
-        if (-1 == curr_ws || (ws->ws_col < wss[curr_ws].ws_col || ws->ws_row < wss[curr_ws].ws_row)) {
-          if (!quiet) printf("server: new size %dx%d\n", ws->ws_col, ws->ws_row);
-          curr_ws = fds_count-IDX_CLIS;
-          try(r, ioctl(fds[IDX_TERM].fd, TIOCSWINSZ, ws));
-        }
+      // enter alt screen if needed (and other term states that i dont know of)
+      if (is_alt) try(r, write(cli, ESC TERM_SMCUP, strlen(ESC TERM_SMCUP)));
 
-        // enter alt screen if needed (and other term states that i dont know of)
-        if (is_alt) {
-          try(r, write(pfd->fd, ESC TERM_SMCUP, strlen(ESC TERM_SMCUP)));
-        }
-
-        pfd->events = POLLIN;
-        fds_count++;
-      } else {
-        if (!quiet) puts("server: aborting connection");
-        close(pfd->fd);
-      }
+      fds_count++;
     } // if new connection
   } // while (poll)
 
