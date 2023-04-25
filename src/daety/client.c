@@ -37,6 +37,46 @@ static void cleanup(int sign) {
   if (sign) _exit(0);
 }
 
+/// update server on winsize changes
+static void winch(int sign) {
+  (void)sign;
+  struct winsize ws;
+  if (ioctl(STDERR_FILENO, TIOCGWINSZ, &ws) < 0) return;
+
+  char buf[16] = ESC CUSTOM_TERM_WINSIZE;
+  char* head = buf + strlen(ESC CUSTOM_TERM_WINSIZE);
+  // ^[[=
+
+  do {
+    *head++ = ws.ws_row%10 + '0';
+    ws.ws_row/= 10;
+  } while (0 != ws.ws_row);
+  // ^[[={h}
+
+  *head++ = ';';
+  // ^[[={h};
+
+  do {
+    *head++ = ws.ws_col%10 + '0';
+    ws.ws_col/= 10;
+  } while (0 != ws.ws_col);
+  // ^[[={h};{w}
+
+  // reverse
+  char* base = buf + strlen(ESC CUSTOM_TERM_WINSIZE);
+  for (int k = 0; k < (head-base)/2; k++) {
+    char tmp = base[k];
+    base[k] = head[-k-1];
+    head[-k-1] = tmp;
+  }
+  // ^[[={w};{h}
+
+  *head++ = 'w';
+  // ^[[={w};{h}w
+
+  write(sock, buf, head-buf);
+}
+
 /// connect, set term raw and winsize to server
 static void init(char const* name, bool skip_raw) {
   int r;
@@ -53,10 +93,12 @@ static void init(char const* name, bool skip_raw) {
     is_raw = true;
   }
 
-  // send size to server
+  // send size to server TODO/FIXME: this is not a solution, use the [=w;hw one instead
   struct winsize ws;
   try(r, ioctl(STDERR_FILENO, TIOCGWINSZ, &ws));
   try(r, write(sock, &ws, sizeof ws));
+  // TODO/FIXME: simply
+  //winch(0);
 
   return;
 finally:
@@ -79,7 +121,7 @@ void client(char const* name, char const* leader_key, char** send_sequence, int 
   bool leader_found = false;
 
   sig_handle(SIGINT, cleanup, SA_RESETHAND);
-  // TODO(winsize): capture window size change signal, update server on it
+  sig_handle(SIGWINCH, winch, 0);
 
   init(name, skip_raw);
 
@@ -103,7 +145,7 @@ void client(char const* name, char const* leader_key, char** send_sequence, int 
   int len;
   while (1) {
     int n;
-    try(n, poll(fds, 2, -1));
+    try_accept(n, poll(fds, 2, -1), EINTR); // allow being interrupted by SIGWINCH
 
     // user input
     if (POLLIN & fds[IDX_USER].revents) {

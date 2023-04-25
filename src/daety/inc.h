@@ -26,6 +26,9 @@
 #define TERM_RESET "c"
 #define TERM_SMCUP "[?1049h"
 #define TERM_RMCUP "[?1049l"
+// fake CSI seq used by client to indicate SIGWINCH to server:
+// "^[[={w};{h}w"; width and height are up to 3 digits
+#define CUSTOM_TERM_WINSIZE "[="
 
 extern char const* errfile;
 extern unsigned int errline;
@@ -34,21 +37,31 @@ extern int errdid;
 extern void _die();
 
 #define die(__msg) do {  \
-    errfile = __FILE__;  \
-    errline = __LINE__;  \
-    errmsg = __msg;      \
-    errdid = errno;      \
-    _die();              \
+  errfile = __FILE__;    \
+  errline = __LINE__;    \
+  errmsg = __msg;        \
+  errdid = errno;        \
+  _die();                \
 } while (1)
-#define try(_v, _r) do {      \
-    _v = _r;                  \
-    if (_v < 0) {             \
-        errfile = __FILE__;   \
-        errline = __LINE__;   \
-        errmsg = #_r;         \
-        errdid = errno;       \
-        goto finally;         \
-    }                         \
+#define try(_v, _r) do {  \
+  _v = _r;                \
+  if (_v < 0) {           \
+    errfile = __FILE__;   \
+    errline = __LINE__;   \
+    errmsg = #_r;         \
+    errdid = errno;       \
+    goto finally;         \
+  }                       \
+} while (0)
+#define try_accept(_v, _r, _e) do {  \
+  _v = _r;                           \
+  if (_v < 0 && _e != errno) {       \
+    errfile = __FILE__;              \
+    errline = __LINE__;              \
+    errmsg = #_r;                    \
+    errdid = errno;                  \
+    goto finally;                    \
+  }                                  \
 } while (0)
 
 #define BUF_SIZE 65535

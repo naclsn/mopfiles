@@ -138,8 +138,57 @@ void server(char const* name, char** args, bool verbose, bool quiet) {
         remove = 0 == len;
 
         // program input
-        if (0 != len) try(r, write(fds[IDX_TERM].fd, buf, len));
-      }
+        if (0 != len) {
+          char const* found = buf-1;
+          int rest = len;
+          while (0 < rest && NULL != (found = memchr(found+1, *ESC, rest))) {
+            rest-= found-buf;
+            if (0 == memcmp(CUSTOM_TERM_WINSIZE, found+1, strlen(CUSTOM_TERM_WINSIZE))) {
+              // client indicating winsize change
+              int w = 0, h = 0;
+              char const* const start = found;
+              if (!quiet) puts("server: received winsize change");
+
+              // ^[[={w};{h}w
+              found+= strlen(CUSTOM_TERM_WINSIZE) + 1;
+              rest-= strlen(CUSTOM_TERM_WINSIZE) + 1;
+
+              // {w};{h}w
+              while ('0' <= *found && *found <= '9' && 0 < rest--)
+                w = 10*w + (*found++ - '0');
+
+              // ;{h}w
+              if (0 == w || 0 == rest || ';' != *found) continue;
+              found++;
+              rest--;
+
+              // {h}w
+              while ('0' <= *found && *found <= '9' && 0 < rest--)
+                h = 10*h + (*found++ - '0');
+
+              // w
+              if (0 == h || 0 == rest || 'w' != *found) continue;
+              found++;
+              rest--;
+
+              wss[i-IDX_CLIS].ws_col = w;
+              wss[i-IDX_CLIS].ws_row = h;
+              if (i-IDX_CLIS == curr_ws || w < wss[curr_ws].ws_col || h < wss[curr_ws].ws_row) {
+                if (!quiet) printf("server: new size %dx%d\n", w, h);
+                curr_ws = i-IDX_CLIS;
+                try(r, ioctl(fds[IDX_TERM].fd, TIOCSWINSZ, &wss[curr_ws]));
+              }
+
+              // splice the sequence out of buf
+              len-= found-start;
+              memmove((void*)start, found, rest);
+            } // if CUSTOM_TERM_WINSIZE
+          } // while scan for ESC
+
+          // ultimately send the buffer (client -> program)
+          try(r, write(fds[IDX_TERM].fd, buf, len));
+        } // if 0 != len
+      } // if client got input
 
       // client was closed
       if (remove) {
@@ -157,7 +206,7 @@ void server(char const* name, char** args, bool verbose, bool quiet) {
             // find new smaller size
             curr_ws = 0;
             for (int k = 1; k < fds_count-IDX_CLIS; k++) {
-              if (wss[k].ws_col < wss[curr_ws].ws_col && wss[k].ws_row < wss[curr_ws].ws_row)
+              if (wss[k].ws_col < wss[curr_ws].ws_col || wss[k].ws_row < wss[curr_ws].ws_row)
                 curr_ws = k;
             }
             if (!quiet) printf("server: new size %dx%d\n", wss[curr_ws].ws_col, wss[curr_ws].ws_row);
@@ -170,7 +219,7 @@ void server(char const* name, char** args, bool verbose, bool quiet) {
             try(r, ioctl(fds[IDX_TERM].fd, TIOCSWINSZ, &ws));
           }
         }
-      }
+      } // if remove
     } // for (clients)
 
     // progam is done
@@ -210,8 +259,8 @@ void server(char const* name, char** args, bool verbose, bool quiet) {
           if (!quiet) puts("server: leaving alt");
           is_alt = false;
         }
-      }
-    }
+      } // while scan for ESC
+    } // if program output
 
     // new incoming connection
     if (POLLIN & fds[IDX_SOCK].revents) {
@@ -221,13 +270,13 @@ void server(char const* name, char** args, bool verbose, bool quiet) {
       try(pfd->fd, accept(fds[IDX_SOCK].fd, NULL, NULL));
       if (!quiet) printf("server: +%d\n", pfd->fd);
 
-      // receive new size to adopt
+      // receive new size to adopt TODO/FIXME: see equivalent on client side: this is not a solution
       try(len, recv(pfd->fd, ws, sizeof *ws, MSG_WAITALL));
 
       // sync or abort and close on failure
       if (sizeof *ws == len) {
         if (!quiet) printf("server: %dx%d\n", ws->ws_col, ws->ws_row);
-        if (-1 == curr_ws || (ws->ws_col < wss[curr_ws].ws_col && ws->ws_row < wss[curr_ws].ws_row)) {
+        if (-1 == curr_ws || (ws->ws_col < wss[curr_ws].ws_col || ws->ws_row < wss[curr_ws].ws_row)) {
           if (!quiet) printf("server: new size %dx%d\n", ws->ws_col, ws->ws_row);
           curr_ws = fds_count-IDX_CLIS;
           try(r, ioctl(fds[IDX_TERM].fd, TIOCSWINSZ, ws));
@@ -244,7 +293,7 @@ void server(char const* name, char** args, bool verbose, bool quiet) {
         if (!quiet) puts("server: aborting connection");
         close(pfd->fd);
       }
-    }
+    } // if new connection
   } // while (poll)
 
 finally:
