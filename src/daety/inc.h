@@ -33,6 +33,8 @@
 // fake CSI seq used by client to indicate SIGWINCH to server:
 // "^[[={w};{h}w"; width and height are up to 3 digits
 #define CUSTOM_TERM_WINSIZE "[="
+// fake CSI seq to terminate program  pqrstuvwxyz
+#define CUSTOM_TERM_TERM "[=/*-*/~"
 
 extern char const* errfile;
 extern unsigned int errline;

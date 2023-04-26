@@ -32,6 +32,7 @@ static pid_t cpid = 0;
 static struct winsize wss[IDX_COUNT-IDX_CLIS];
 static struct winsize curr_ws = {.ws_col= 80, .ws_row= 24};
 static bool is_alt = false;
+static bool terminate = false;
 
 /// cleanup SIGINT handler
 static void cleanup(int sign) {
@@ -40,7 +41,8 @@ static void cleanup(int sign) {
   lastsay("cleaning");
   if (crap_name) unlink(crap_name);
 
-  if (sign) {
+  if (terminate) {
+    // program did not terminate by itself (or from user input)
     lastsay("terminating program (1s)");
     kill(cpid, SIGTERM);
     sleep(1);
@@ -173,13 +175,17 @@ void server(char const* name, char** args, bool daemon, bool verbose, bool quiet
         }
         remove = 0 == len;
 
-        // program input
+        // input for program
         if (0 != len) {
           char const* found = buf-1;
           int rest = len;
           while (0 < rest && NULL != (found = memchr(found+1, *ESC, rest))) {
             rest-= found-buf;
-            if (0 == memcmp(CUSTOM_TERM_WINSIZE, found+1, strlen(CUSTOM_TERM_WINSIZE))) {
+            if (0 == memcmp(CUSTOM_TERM_TERM, found+1, strlen(CUSTOM_TERM_TERM))) {
+              if (!quiet) puts("server: received terminate");
+              terminate = true;
+              goto finally;
+            } else if (0 == memcmp(CUSTOM_TERM_WINSIZE, found+1, strlen(CUSTOM_TERM_WINSIZE))) {
               // client indicating winsize change
               int w = 0, h = 0;
               char const* const start = found;
@@ -298,6 +304,7 @@ void server(char const* name, char** args, bool daemon, bool verbose, bool quiet
   } // while (poll)
 
 finally:
+  if (errdid) terminate = true;
   cleanup(0);
   if (errdid) _die();
 }

@@ -11,6 +11,7 @@ Usage: ./daety [opts] <prog> [<args...>]
 --help    -h         display this help
 --version            show the build version
 --list    -l         list known (local) servers
+--kill               terminate the server
 
 shared client/server:
 --id      -i <id>    the default is form prog and args
@@ -60,7 +61,7 @@ Client can be specified a 'leader key' with `--key/-k`.
 The `^` notation is used (for example esc is `^[`, see
 `showkey -a`). The default is `^\`. The leader key is used
 to talk with the client itself:
- - `<key>^C`: ~~terminate the server, close the client~~ same as below
+ - `<key>^C`: terminate the server, close the client
  - `<key>^D`: close the client, keep the server
  - `<key>^Z`: pause the client (SIGTSTP)
 

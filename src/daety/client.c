@@ -29,9 +29,11 @@ static bool is_alt = false;
 
 /// cleanup SIGINT handler
 static void cleanup(int sign) {
+  // terminate program if called as signal handler
+  if (sign) write(sock, ESC CUSTOM_TERM_TERM, strlen(ESC CUSTOM_TERM_TERM));
   close(sock);
 
-  if (is_raw) tcsetattr(STDERR_FILENO, TCSANOW, &prev_tio);
+  tcsetattr(STDERR_FILENO, TCSANOW, &prev_tio);
   if (is_alt) {
     write(STDOUT_FILENO, ESC TERM_RMCUP, 2);
     write(STDOUT_FILENO, ESC TERM_RESET, 2);
@@ -87,14 +89,18 @@ static int init(char const* name, bool skip_raw) {
   if (-1 == sock) return -1;
 
   // set terminal into raw mode
-  struct termios tio;
-  try(r, tcgetattr(STDERR_FILENO, &tio));
+  try(r, tcgetattr(STDERR_FILENO, &prev_tio));
 
   if (!skip_raw) {
-    prev_tio = tio;
-    cfmakeraw(&tio);
-    try(r, tcsetattr(STDERR_FILENO, TCSANOW, &tio));
+    struct termios raw_tio = prev_tio;
+    cfmakeraw(&raw_tio);
+    try(r, tcsetattr(STDERR_FILENO, TCSANOW, &raw_tio));
     is_raw = true;
+  } else {
+    // still need to disable echo
+    struct termios noecho_tio = prev_tio;
+    noecho_tio.c_lflag&= ~(ECHO | ECHONL);
+    try(r, tcsetattr(STDERR_FILENO, TCSANOW, &noecho_tio));
   }
 
   // send size to server
@@ -129,6 +135,8 @@ int client(char const* name, char const* leader_key, char** send_sequence, int s
   if (send_sequence) {
     char buf[BUF_SIZE];
     for (; 0 < sequence_len; sequence_len--, send_sequence++) {
+      // NULL element indicates end of programmatic input (used by eg. '--kill')
+      if (NULL == *send_sequence) goto finally;
       int len = parse_key(*send_sequence, buf, BUF_SIZE);
       try(r, write(sock, buf, len));
     }
@@ -153,36 +161,31 @@ int client(char const* name, char const* leader_key, char** send_sequence, int s
       try(len, read(STDIN_FILENO, buf, BUF_SIZE));
       if (0 == len) break;
 
-      // handle leader key
-      if (leader_found) {
-        switch (buf[0]) {
-          case CTRL('C'): // ^C also kill server?
-            try(r, raise(SIGINT));
+      if (!skip_raw) {
+        // handle leader key
+        if (leader_found) {
+          switch (buf[0]) {
+            case CTRL('C'):
+              try(r, raise(SIGINT));
 
-          case CTRL('D'):
-            goto finally;
+            case CTRL('D'):
+              goto finally;
 
-          case CTRL('Z'):
-            cleanup(0); // TODO/FIXME: does not make it..
-            try(r, raise(SIGSTOP));
-            try(r, init(name, skip_raw));
-            leader_found = false;
-            continue;
+            case CTRL('Z'):
+              cleanup(0);
+              try(r, raise(SIGSTOP));
+              try(r, init(name, skip_raw));
+              leader_found = false;
+              continue;
 
-          default:
-            // not for me, forward all (re-prefix leader)
-            memmove(buf+leader_len, buf, len);
-            memcpy(buf, leader, leader_len);
-            leader_found = false;
-        }
-      } else {
-        // in raw mode, `buf` will contain exactly the sequence, so this does it for now
-        leader_found = is_raw && 0 == memcmp(leader, buf, leader_len);
-
-        // TODO(term): when not raw (if ever)
-        // try(r, write(sock, buf, .. up to leader));
-        // try(r, write(sock, buf, from after key past leader ..));
-      }
+            default:
+              // not for me, forward all (re-prefix leader)
+              memmove(buf+leader_len, buf, len);
+              memcpy(buf, leader, leader_len);
+              leader_found = false;
+          }
+        } else leader_found = is_raw && 0 == memcmp(leader, buf, leader_len);
+      } // if raw mode
 
       if (!leader_found) try(r, write(sock, buf, len));
     }

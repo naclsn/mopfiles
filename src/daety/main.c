@@ -21,6 +21,7 @@ void usage(char const* self) {
     "--help    -h         display this help\n"
     "--version            show the build version\n"
     "--list    -l         list known (local) servers\n"
+    "--kill               terminate the server\n"
     "\n"
     "shared client/server:\n"
     "--id      -i <id>    the default is from prog args\n"
@@ -85,6 +86,7 @@ int main(int argc, char** argv) {
   char** cmd = NULL;
   int cmd_len = 0;
   bool is_cooked = false;
+  bool is_kill = false;
 
   // parse options
   while (argc && *argv) {
@@ -109,6 +111,7 @@ int main(int argc, char** argv) {
         else if (argis("--key"))     key = *++argv;
         else if (argis("--cmd"))     cmd = argv;
         else if (argis("--cooked"))  is_cooked = true;
+        else if (argis("--kill"))    is_kill = true;
         else {
           printf("Unknown option: '%s'\n", *argv);
           return EXIT_FAILURE;
@@ -135,7 +138,9 @@ int main(int argc, char** argv) {
     argv++;
   } // while arg
 
-  if (NULL == *argv || '\0' == (*argv)[0]) {
+  // if the id is given, 'not --server' can operate, same with '--kill'
+  bool wegood = NULL != id && (!is_server || is_kill);
+  if (!wegood && (NULL == *argv || '\0' == (*argv)[0])) {
     usage(self);
     return EXIT_FAILURE;
   }
@@ -158,6 +163,16 @@ int main(int argc, char** argv) {
     dst[-1] = '\0';
   } else strncpy(id_buf+strlen(id_buf), id, 1024-strlen(id_buf));
   id = id_buf;
+
+  if (is_kill) {
+    // NULL indicates client to exit right after sending
+    char* term_cmd[2] = {ESC CUSTOM_TERM_TERM, NULL};
+    if (-1 == client(id, key, term_cmd, 1, false)) {
+      puts("Could not join server");
+      return EXIT_FAILURE;
+    }
+    return EXIT_SUCCESS;
+  }
 
   if (is_server) {
     server(id, argv, false, is_verbose, is_quiet);
