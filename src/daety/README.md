@@ -9,7 +9,8 @@ $ ./daety --help
 Usage: ./daety [opts] <prog> [<args...>]
 
 --help    -h         display this help
---version            show build the version
+--version            show the build version
+--list    -l         list known (local) servers
 
 shared client/server:
 --id      -i <id>    the default is form prog and args

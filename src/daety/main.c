@@ -19,7 +19,8 @@ void usage(char const* self) {
     "Usage: %s [opts] <prog> [<args...>]\n"
     "\n"
     "--help    -h         display this help\n"
-    "--version            show build the version\n"
+    "--version            show the build version\n"
+    "--list    -l         list known (local) servers\n"
     "\n"
     "shared client/server:\n"
     "--id      -i <id>    the default is from prog args\n"
@@ -45,10 +46,13 @@ void usage(char const* self) {
 int main(int argc, char** argv) {
   char const* self = *argv++;
   #define argis(_x) 0 == strcmp(_x, *argv)
+
   if (0 == --argc || argis("--help") || argis("-h")) {
     usage(self);
     return EXIT_FAILURE;
-  } if (argis("--version")) {
+  }
+
+  if (argis("--version")) {
     #define xtocstr(x) tocstr(x)
     #define tocstr(x) #x
     #ifndef VERS
@@ -58,6 +62,18 @@ int main(int argc, char** argv) {
     puts(xtocstr(VERS));
     #undef xtocstr
     #undef tocstr
+    return EXIT_SUCCESS;
+  }
+
+  if (argis("--list") || argis("-l")) {
+    DIR* d = opendir(TMP_DIR);
+    if (!d) return EXIT_FAILURE;
+    struct dirent* dir;
+    while ((dir = readdir(d)) != NULL) {
+      if (0 == memcmp(LOC_ID_PFX, dir->d_name, strlen(LOC_ID_PFX)))
+        puts(dir->d_name+strlen(LOC_ID_PFX)); // ZZZ: will need to reverse-id here
+    }
+    closedir(d);
     return EXIT_SUCCESS;
   }
 
@@ -130,7 +146,7 @@ int main(int argc, char** argv) {
   //   return EXIT_FAILURE;
   // }
 
-  char id_buf[1024] = "/tmp/daety-";
+  char id_buf[1024] = TMP_DIR "/" LOC_ID_PFX;
   if (NULL == id) {
     // NOTE: it uses all of prog and args, maybe just the prog is enough?
     char* dst = id_buf+strlen(id_buf);

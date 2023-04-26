@@ -3,6 +3,7 @@
 
 //#define _XOPEN_SOURCE 501
 
+#include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <pty.h>
@@ -20,6 +21,9 @@
 #include <sys/wait.h>
 #include <termios.h>
 #include <unistd.h>
+
+#define TMP_DIR "/tmp"
+#define LOC_ID_PFX "daety-"
 
 // these should be enough most of the time
 #define ESC "\033"
