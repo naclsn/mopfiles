@@ -144,14 +144,30 @@ int main(int argc, char** argv) {
   id = id_buf;
 
   if (is_server) {
-    server(id, argv, is_verbose, is_quiet);
+    server(id, argv, false, is_verbose, is_quiet);
     return EXIT_SUCCESS;
   }
 
-  // TODO: if server not exists fork and stuff
-
   if (cmd) cmd++; // at this point, `cmd` is still on '--cmd' or '-c'
 
-  client(id, key, cmd, cmd_len, is_cooked);
+  if (-1 == client(id, key, cmd, cmd_len, is_cooked)) {
+    // server not exists, start it as daemon
+    pid_t spid = fork();
+    if (spid < 0) return EXIT_FAILURE;
+
+    if (0 == spid) {
+      server(id, argv, true, false, true);
+      return EXIT_SUCCESS;
+    }
+
+    waitpid(spid, NULL, 0);
+
+    sleep(1); // ZZZ: just in case
+
+    if (-1 == client(id, key, cmd, cmd_len, is_cooked)) {
+      puts("Could not start server");
+      return EXIT_FAILURE;
+    }
+  }
   return EXIT_SUCCESS;
 }

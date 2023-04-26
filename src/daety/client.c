@@ -9,8 +9,11 @@ static int conx_local_socket(char const* filename) {
 
   strncpy(addr.sun_path, filename, sizeof addr.sun_path);
 
-  int r;
-  try(r, connect(sock, (struct sockaddr*)&addr, SUN_LEN(&addr)));
+  int r = connect(sock, (struct sockaddr*)&addr, SUN_LEN(&addr));
+  if (r < 0) {
+    close(sock);
+    return -1;
+  }
 
   return sock;
 finally:
@@ -78,9 +81,10 @@ static void winch(int sign) {
 }
 
 /// connect, set term raw and winsize to server
-static void init(char const* name, bool skip_raw) {
+static int init(char const* name, bool skip_raw) {
   int r;
   sock = conx_local_socket(name);
+  if (-1 == sock) return -1;
 
   // set terminal into raw mode
   struct termios tio;
@@ -96,9 +100,10 @@ static void init(char const* name, bool skip_raw) {
   // send size to server
   winch(0);
 
-  return;
+  return 0;
 finally:
   _die();
+  return 0;
 }
 
 static char leader[8];
@@ -111,15 +116,15 @@ static int parse_key(char const* ser, char* de, int max_len) {
   return r;
 }
 
-void client(char const* name, char const* leader_key, char** send_sequence, int sequence_len, bool skip_raw) {
-  int r;
+int client(char const* name, char const* leader_key, char** send_sequence, int sequence_len, bool skip_raw) {
   int leader_len = parse_key(leader_key, leader, 8);
   bool leader_found = false;
 
+  int r = init(name, skip_raw);
+  if (-1 == r) return -1;
+
   sig_handle(SIGINT, cleanup, SA_RESETHAND);
   sig_handle(SIGWINCH, winch, 0);
-
-  init(name, skip_raw);
 
   if (send_sequence) {
     char buf[BUF_SIZE];
@@ -158,9 +163,9 @@ void client(char const* name, char const* leader_key, char** send_sequence, int 
             goto finally;
 
           case CTRL('Z'):
-            cleanup(0); // FIXME: does not make it..
+            cleanup(0); // TODO/FIXME: does not make it..
             try(r, raise(SIGSTOP));
-            init(name, skip_raw);
+            try(r, init(name, skip_raw));
             leader_found = false;
             continue;
 
@@ -215,4 +220,5 @@ finally:
 
   // program exit code should be the last byte sent if any
   exit(len ? buf[len-1] : 0);
+  return 0;
 }

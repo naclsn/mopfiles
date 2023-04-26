@@ -123,9 +123,25 @@ static void putesc(char const* buf, int len) {
   } while (--len);
 }
 
-void server(char const* name, char** args, bool verbose, bool quiet) {
+void server(char const* name, char** args, bool daemon, bool verbose, bool quiet) {
   int r;
+
+  if (daemon) {
+    pid_t dpid;
+    try(dpid, fork());
+    if (0 < dpid) _exit(0);
+    close(STDIN_FILENO);
+    close(STDOUT_FILENO);
+    close(STDERR_FILENO);
+  }
+
   cpid = fork_program(args);
+
+  if (daemon) {
+    try(r, setsid());
+    try(r, chdir("/"));
+    umask(0);
+  }
 
   sig_handle(SIGINT, cleanup, SA_RESETHAND);
   sig_handle(SIGTERM, cleanup, SA_RESETHAND);
