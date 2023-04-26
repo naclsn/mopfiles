@@ -99,8 +99,10 @@ static int update_winsize(bool quiet) {
       if (wss[k].ws_col < wss[new_ws].ws_col || wss[k].ws_row < wss[new_ws].ws_row)
         new_ws = k;
     }
-    if (new_ws == curr_ws) return 0;
+    //unsigned short const pw = wss[curr_ws].ws_col;
+    //unsigned short const ph = wss[curr_ws].ws_row;
     curr_ws = new_ws;
+    //if (pw == wss[curr_ws].ws_col && ph == wss[curr_ws].ws_row) return 0;
     if (!quiet) printf("server: new size %dx%d\n", wss[curr_ws].ws_col, wss[curr_ws].ws_row);
     return ioctl(fds[IDX_TERM].fd, TIOCSWINSZ, wss+curr_ws);
   } else {
