@@ -30,7 +30,7 @@ static struct pollfd fds[IDX_COUNT];
 static int fds_count = 0;
 static pid_t cpid = 0;
 static struct winsize wss[IDX_COUNT-IDX_CLIS];
-static int curr_ws = -1;
+static struct winsize curr_ws = {.ws_col= 80, .ws_row= 24};
 static bool is_alt = false;
 
 /// cleanup SIGINT handler
@@ -94,24 +94,20 @@ finally:
 static int update_winsize(bool quiet) {
   if (IDX_CLIS < fds_count) {
     // find new smaller size
-    int new_ws = 0;
-    for (int k = 1; k < fds_count-IDX_CLIS; k++) {
-      if (wss[k].ws_col < wss[new_ws].ws_col || wss[k].ws_row < wss[new_ws].ws_row)
-        new_ws = k;
+    curr_ws.ws_col = 0xffff;
+    curr_ws.ws_row = 0xffff;
+    for (int k = 0; k < fds_count-IDX_CLIS; k++) {
+      if (wss[k].ws_col < curr_ws.ws_col) curr_ws.ws_col = wss[k].ws_col;
+      if (wss[k].ws_row < curr_ws.ws_row) curr_ws.ws_row = wss[k].ws_row;
     }
-    //unsigned short const pw = wss[curr_ws].ws_col;
-    //unsigned short const ph = wss[curr_ws].ws_row;
-    curr_ws = new_ws;
-    //if (pw == wss[curr_ws].ws_col && ph == wss[curr_ws].ws_row) return 0;
-    if (!quiet) printf("server: new size %dx%d\n", wss[curr_ws].ws_col, wss[curr_ws].ws_row);
-    return ioctl(fds[IDX_TERM].fd, TIOCSWINSZ, wss+curr_ws);
   } else {
     // use a 'standard' 80x24
-    curr_ws = -1;
-    struct winsize ws = {.ws_col= 80, .ws_row= 24};
-    if (!quiet) printf("server: 'standard' size %dx%d\n", ws.ws_col, ws.ws_row);
-    return ioctl(fds[IDX_TERM].fd, TIOCSWINSZ, &ws);
+    curr_ws.ws_col = 80;
+    curr_ws.ws_row = 24;
   }
+
+  if (!quiet) printf("server: new size %dx%d\n", curr_ws.ws_col, curr_ws.ws_row);
+  return ioctl(fds[IDX_TERM].fd, TIOCSWINSZ, &curr_ws);
 }
 
 /// output using ^x sequences
@@ -213,7 +209,7 @@ void server(char const* name, char** args, bool daemon, bool verbose, bool quiet
 
               wss[i-IDX_CLIS].ws_col = w;
               wss[i-IDX_CLIS].ws_row = h;
-              update_winsize(quiet);
+              try(r, update_winsize(quiet));
 
               // splice the sequence out of buf
               len-= found-start;
@@ -238,7 +234,7 @@ void server(char const* name, char** args, bool daemon, bool verbose, bool quiet
           wss[j-IDX_CLIS] = wss[j-IDX_CLIS+1];
         }
 
-        if (i-IDX_CLIS == curr_ws) try(r, update_winsize(quiet));
+        try(r, update_winsize(quiet));
       } // if remove
     } // for (clients)
 
@@ -292,11 +288,7 @@ void server(char const* name, char** args, bool daemon, bool verbose, bool quiet
       fds[fds_count].events = POLLIN;
 
       // init winsize for this client
-      if (-1 == curr_ws) {
-        curr_ws = fds_count-IDX_CLIS;
-        wss[curr_ws].ws_col = 80;
-        wss[curr_ws].ws_row = 24;
-      } else wss[fds_count-IDX_CLIS] = wss[curr_ws];
+      wss[fds_count-IDX_CLIS] = curr_ws;
 
       // enter alt screen if needed (and other term states that i dont know of)
       if (is_alt) try(r, write(cli, ESC TERM_SMCUP, strlen(ESC TERM_SMCUP)));
