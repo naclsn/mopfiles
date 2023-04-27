@@ -25,7 +25,7 @@ void usage(char const* self) {
     "\n"
     "shared client/server:\n"
     "--id      -i <id>    the default is from prog args\n"
-    "(TODO: socket options)\n"
+    "--addr    -a <addr>  (WIP)\n"
     "\n"
     "server only:\n"
     "--server  -s         starts only the server\n"
@@ -79,6 +79,7 @@ int main(int argc, char** argv) {
   }
 
   char const* id = NULL;
+  char const* addr = NULL;
   bool is_server = false;
   bool is_verbose = false;
   bool is_quiet = false;
@@ -105,6 +106,7 @@ int main(int argc, char** argv) {
           break;
         }
         else if (argis("--id"))      id = *++argv;
+        else if (argis("--addr"))    addr = *++argv;
         else if (argis("--server"))  is_server = true;
         else if (argis("--verbose")) is_verbose = true;
         else if (argis("--quiet"))   is_quiet = true;
@@ -122,6 +124,7 @@ int main(int argc, char** argv) {
         for (char const* c = *argv+1; *c; c++) {
           switch (*c) {
             case 'i': id = *++argv;     break;
+            case 'a': addr = *++argv;   break;
             case 's': is_server = true; break;
             case 'q': is_quiet = true;  break;
             case 'k': key = *++argv;    break;
@@ -138,8 +141,8 @@ int main(int argc, char** argv) {
     argv++;
   } // while arg
 
-  // if the id is given, 'not --server' can operate, same with '--kill'
-  bool wegood = NULL != id && (!is_server || is_kill);
+  // if an id or addr is given, 'not --server' can operate, same with '--kill'
+  bool wegood = (NULL != id || NULL != addr) && (!is_server || is_kill);
   if (!wegood && (NULL == *argv || '\0' == (*argv)[0])) {
     usage(self);
     return EXIT_FAILURE;
@@ -152,16 +155,18 @@ int main(int argc, char** argv) {
   // }
 
   char id_buf[1024] = TMP_DIR "/" LOC_ID_PFX;
-  if (NULL == id) {
-    // NOTE: it uses all of prog and args, maybe just the prog is enough?
-    char* dst = id_buf+strlen(id_buf);
-    for (char** a = argv; *a && dst-id_buf < 1023; a++) {
-      char const* src = *a;
-      while ('\0' != (*dst++ = *src++) && dst-id_buf < 1023);
-      dst[-1] = ' ';
-    }
-    dst[-1] = '\0';
-  } else strncpy(id_buf+strlen(id_buf), id, 1024-strlen(id_buf));
+  if (NULL == addr) {
+    if (NULL == id) {
+      // NOTE: it uses all of prog and args, maybe just the prog is enough?
+      char* dst = id_buf+strlen(id_buf);
+      for (char** a = argv; *a && dst-id_buf < 1023; a++) {
+        char const* src = *a;
+        while ('\0' != (*dst++ = *src++) && dst-id_buf < 1023);
+        dst[-1] = ' ';
+      }
+      dst[-1] = '\0';
+    } else strncpy(id_buf+strlen(id_buf), id, 1024-strlen(id_buf));
+  } else strcpy(id_buf, addr); // --addr
   id = id_buf;
 
   if (is_kill) {

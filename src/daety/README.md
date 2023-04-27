@@ -15,7 +15,7 @@ Usage: ./daety [opts] <prog> [<args...>]
 
 shared client/server:
 --id      -i <id>    the default is form prog and args
-(TODO: socket options)
+--addr    -a <addr>  (WIP)
 
 server only:
 --server  -s         starts only the server

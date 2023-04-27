@@ -1,15 +1,49 @@
 #include "client.h"
 
-/// connect to a local socket; exits on failure
+/// connect to a local socket; returns -1 on failure
 static int conx_local_socket(char const* filename) {
-  int sock = -1;
   struct sockaddr_un addr = {.sun_family= AF_LOCAL};
-
-  try(sock, socket(PF_LOCAL, SOCK_STREAM, 0));
-
   strncpy(addr.sun_path, filename, sizeof addr.sun_path);
 
+  // TODO: factorize
+  int sock = -1;
+  try(sock, socket(PF_LOCAL, SOCK_STREAM, 0));
   int r = connect(sock, (struct sockaddr*)&addr, SUN_LEN(&addr));
+  if (r < 0) {
+    close(sock);
+    return -1;
+  }
+
+  return sock;
+finally:
+  close(sock);
+  _die();
+  return -1;
+}
+
+/// connect to a IPv4 socket; returns -1 on failure
+static int conx_ipv4_socket(char const* ipv4) {
+  // TODO: factorize
+  char* port = strchr(ipv4, ':');
+  if (NULL == port) {
+    printf("Missing port in address: '%s'\n", ipv4);
+    exit(EXIT_FAILURE);
+  }
+  struct sockaddr_in addr = {
+    .sin_family= AF_INET,
+    .sin_port= htons(atoi(port+1)),
+  };
+  *port = '\0';
+  if (0 == inet_aton(ipv4, &addr.sin_addr)) {
+    printf("Invalid IPv4 address: '%s'\n", ipv4);
+    exit(EXIT_FAILURE);
+  }
+  *port = ':';
+
+  // TODO: factorize
+  int sock = -1;
+  try(sock, socket(PF_INET, SOCK_STREAM, 0));
+  int r = connect(sock, (struct sockaddr*)&addr, sizeof(addr));
   if (r < 0) {
     close(sock);
     return -1;
@@ -122,11 +156,11 @@ static int parse_key(char const* ser, char* de, int max_len) {
   return r;
 }
 
-int client(char const* name, char const* leader_key, char** send_sequence, int sequence_len, bool skip_raw) {
+int client(char const* id, char const* leader_key, char** send_sequence, int sequence_len, bool skip_raw) {
   int leader_len = parse_key(leader_key, leader, 8);
   bool leader_found = false;
 
-  int r = init(name, skip_raw);
+  int r = init(id, skip_raw);
   if (-1 == r) return -1;
 
   sig_handle(SIGINT, cleanup, SA_RESETHAND);
@@ -174,7 +208,7 @@ int client(char const* name, char const* leader_key, char** send_sequence, int s
             case CTRL('Z'):
               cleanup(0);
               try(r, raise(SIGSTOP));
-              try(r, init(name, skip_raw));
+              try(r, init(id, skip_raw));
               leader_found = false;
               continue;
 

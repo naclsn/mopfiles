@@ -3,9 +3,11 @@
 
 //#define _XOPEN_SOURCE 501
 
+#include <arpa/inet.h>
 #include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <netinet/ip.h>
 #include <pty.h>
 #include <signal.h>
 #include <stdbool.h>
@@ -80,5 +82,32 @@ extern void _die();
   int r;                                     \
   try(r, sigaction(_sign, &sa, NULL));       \
 } while (0)
+
+enum use_socket {
+  USE_LOCAL,
+  USE_IPV4,
+  //USE_IPV6,
+};
+
+/// "%d.%d.%d.%d:%d" -> USE_IPV4
+/// default -> USE_LOCAL
+static enum use_socket identify_use(char const* id) {
+  char const* head;
+
+  // test ipv4
+  head = id;
+  for (int i = 0; i < 4; i++, head++) {
+    for (int j = 0; j <3; j++, head++) {
+      if ('.' == *head || ':' == *head) break;
+      if ('0' > *head || *head > '9') goto not_ipv4;
+    }
+    if ((i <3 ? '.' : ':') != *head) goto not_ipv4;
+  }
+  return USE_IPV4;
+not_ipv4:
+
+  // default
+  return USE_LOCAL;
+}
 
 #endif // _DATY_INC
