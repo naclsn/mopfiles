@@ -1,61 +1,5 @@
 #include "client.h"
 
-/// connect to a local socket; returns -1 on failure
-static int conx_local_socket(char const* filename) {
-  struct sockaddr_un addr = {.sun_family= AF_LOCAL};
-  strncpy(addr.sun_path, filename, sizeof addr.sun_path);
-
-  // TODO: factorize
-  int sock = -1;
-  try(sock, socket(PF_LOCAL, SOCK_STREAM, 0));
-  int r = connect(sock, (struct sockaddr*)&addr, SUN_LEN(&addr));
-  if (r < 0) {
-    close(sock);
-    return -1;
-  }
-
-  return sock;
-finally:
-  close(sock);
-  _die();
-  return -1;
-}
-
-/// connect to a IPv4 socket; returns -1 on failure
-static int conx_ipv4_socket(char const* ipv4) {
-  // TODO: factorize
-  char* port = strchr(ipv4, ':');
-  if (NULL == port) {
-    printf("Missing port in address: '%s'\n", ipv4);
-    exit(EXIT_FAILURE);
-  }
-  struct sockaddr_in addr = {
-    .sin_family= AF_INET,
-    .sin_port= htons(atoi(port+1)),
-  };
-  *port = '\0';
-  if (0 == inet_aton(ipv4, &addr.sin_addr)) {
-    printf("Invalid IPv4 address: '%s'\n", ipv4);
-    exit(EXIT_FAILURE);
-  }
-  *port = ':';
-
-  // TODO: factorize
-  int sock = -1;
-  try(sock, socket(PF_INET, SOCK_STREAM, 0));
-  int r = connect(sock, (struct sockaddr*)&addr, sizeof(addr));
-  if (r < 0) {
-    close(sock);
-    return -1;
-  }
-
-  return sock;
-finally:
-  close(sock);
-  _die();
-  return -1;
-}
-
 static int sock = -1;
 static bool is_raw = false;
 static struct termios prev_tio;
@@ -117,24 +61,26 @@ static void winch(int sign) {
 }
 
 /// connect, set term raw and winsize to server
-static int init(char const* name, bool skip_raw) {
+static int init(enum use_socket use, union any_addr const* addr, bool skip_raw) {
   int r;
-  sock = conx_local_socket(name);
+  sock = conx_sock(use, addr);
   if (-1 == sock) return -1;
 
-  // set terminal into raw mode
-  try(r, tcgetattr(STDERR_FILENO, &prev_tio));
-
   if (!skip_raw) {
+    // set terminal into raw mode
+    try(r, tcgetattr(STDERR_FILENO, &prev_tio));
     struct termios raw_tio = prev_tio;
     cfmakeraw(&raw_tio);
     try(r, tcsetattr(STDERR_FILENO, TCSANOW, &raw_tio));
     is_raw = true;
   } else {
-    // still need to disable echo
-    struct termios noecho_tio = prev_tio;
-    noecho_tio.c_lflag&= ~(ECHO | ECHONL);
-    try(r, tcsetattr(STDERR_FILENO, TCSANOW, &noecho_tio));
+    // still tries to disable echo
+    r = tcgetattr(STDERR_FILENO, &prev_tio);
+    if (-1 != r) {
+      struct termios noecho_tio = prev_tio;
+      noecho_tio.c_lflag&= ~(ECHO | ECHONL);
+      try(r, tcsetattr(STDERR_FILENO, TCSANOW, &noecho_tio));
+    }
   }
 
   // send size to server
@@ -157,10 +103,15 @@ static int parse_key(char const* ser, char* de, int max_len) {
 }
 
 int client(char const* id, char const* leader_key, char** send_sequence, int sequence_len, bool skip_raw) {
+  int r;
+  enum use_socket use = identify_use(id);
+  union any_addr addr;
+  try(r, fill_addr(use, &addr, id));
+
   int leader_len = parse_key(leader_key, leader, 8);
   bool leader_found = false;
 
-  int r = init(id, skip_raw);
+  r = init(use, &addr, skip_raw);
   if (-1 == r) return -1;
 
   sig_handle(SIGINT, cleanup, SA_RESETHAND);
@@ -208,7 +159,7 @@ int client(char const* id, char const* leader_key, char** send_sequence, int seq
             case CTRL('Z'):
               cleanup(0);
               try(r, raise(SIGSTOP));
-              try(r, init(id, skip_raw));
+              try(r, init(use, &addr, skip_raw));
               leader_found = false;
               continue;
 

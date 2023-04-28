@@ -172,7 +172,7 @@ int main(int argc, char** argv) {
   if (is_kill) {
     // NULL indicates client to exit right after sending
     char* term_cmd[2] = {ESC CUSTOM_TERM_TERM, NULL};
-    if (-1 == client(id, key, term_cmd, 1, false)) {
+    if (-1 == client(id, key, term_cmd, 1, true)) {
       puts("Could not join server");
       return EXIT_FAILURE;
     }

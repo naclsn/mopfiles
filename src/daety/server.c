@@ -1,57 +1,5 @@
 #include "server.h"
 
-/// create and bind a local socket; exits on failure
-static int bind_local_socket(char const* filename, int listen_n) {
-  struct sockaddr_un addr = {.sun_family= AF_LOCAL};
-  strncpy(addr.sun_path, filename, sizeof addr.sun_path);
-
-  // TODO: factorize
-  int sock = -1;
-  try(sock, socket(PF_LOCAL, SOCK_STREAM, 0));
-  int r;
-  try(r, bind(sock, (struct sockaddr*)&addr, SUN_LEN(&addr)));
-  try(r, listen(sock, listen_n));
-
-  return sock;
-finally:
-  close(sock);
-  _die();
-  return -1;
-}
-
-/// create and bind an IPv4 socket; exits on failure
-static int bind_ipv4_socket(char const* ipv4, int listen_n) {
-  // TODO: factorize
-  char* port = strchr(ipv4, ':');
-  if (NULL == port) {
-    printf("Missing port in address: '%s'\n", ipv4);
-    exit(EXIT_FAILURE);
-  }
-  struct sockaddr_in addr = {
-    .sin_family= AF_INET,
-    .sin_port= htons(atoi(port+1)),
-  };
-  *port = '\0';
-  if (0 == inet_aton(ipv4, &addr.sin_addr)) {
-    printf("Invalid IPv4 address: '%s'\n", ipv4);
-    exit(EXIT_FAILURE);
-  }
-  *port = ':';
-
-  // TODO: factorize
-  int sock = -1;
-  try(sock, socket(PF_INET, SOCK_STREAM, 0));
-  int r;
-  try(r, bind(sock, (struct sockaddr*)&addr, sizeof(addr)));
-  try(r, listen(sock, listen_n));
-
-  return sock;
-finally:
-  close(sock);
-  _die();
-  return -1;
-}
-
 #define IDX_SOCK 0
 #define IDX_TERM 1
 #define IDX_CLIS 2
@@ -157,6 +105,9 @@ static void putesc(char const* buf, int len) {
 
 void server(char const* id, char** args, bool daemon, bool verbose, bool quiet) {
   int r;
+  enum use_socket use = identify_use(id);
+  union any_addr addr;
+  try(r, fill_addr(use, &addr, id));
 
   if (daemon) {
     pid_t dpid;
@@ -178,11 +129,8 @@ void server(char const* id, char** args, bool daemon, bool verbose, bool quiet) 
   sig_handle(SIGINT, cleanup, SA_RESETHAND);
   sig_handle(SIGTERM, cleanup, SA_RESETHAND);
 
-  switch (identify_use(id)) {
-    case USE_LOCAL: fds[IDX_SOCK].fd = bind_local_socket(filename = id, IDX_COUNT-IDX_CLIS); break;
-    // FIXME/TODO: address should be parsed before fork and daemon so errors can be handled
-    case USE_IPV4:  fds[IDX_SOCK].fd = bind_ipv4_socket(id, IDX_COUNT-IDX_CLIS);             break;
-  }
+  if (USE_LOCAL == use) filename = id;
+  try(fds[IDX_SOCK].fd, bind_sock(use, &addr, IDX_COUNT-IDX_CLIS));
 
   fds[IDX_TERM].events = POLLIN;
   fds[IDX_SOCK].events = POLLIN;
