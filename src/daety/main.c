@@ -148,12 +148,6 @@ int main(int argc, char** argv) {
     return EXIT_FAILURE;
   }
 
-  // // TODO:
-  // if (!exists(argv[0])) {
-  //   printf("Program not found: '%s'\n", argv[0]);
-  //   return EXIT_FAILURE;
-  // }
-
   char id_buf[1024] = TMP_DIR "/" LOC_ID_PFX;
   if (NULL == addr) {
     if (NULL == id) {
