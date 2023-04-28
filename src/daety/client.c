@@ -2,6 +2,7 @@
 
 static int sock = -1;
 static bool is_raw = false;
+static bool not_tty = false;
 static struct termios prev_tio;
 static bool is_alt = false;
 
@@ -11,7 +12,7 @@ static void cleanup(int sign) {
   if (sign) write(sock, ESC CUSTOM_TERM_TERM, strlen(ESC CUSTOM_TERM_TERM));
   close(sock);
 
-  tcsetattr(STDERR_FILENO, TCSANOW, &prev_tio);
+  if (!not_tty) tcsetattr(STDERR_FILENO, TCSANOW, &prev_tio);
   if (is_alt) {
     write(STDOUT_FILENO, ESC TERM_RMCUP, 2);
     write(STDOUT_FILENO, ESC TERM_RESET, 2);
@@ -73,14 +74,14 @@ static int init(enum use_socket use, union any_addr const* addr, bool skip_raw) 
     cfmakeraw(&raw_tio);
     try(r, tcsetattr(STDERR_FILENO, TCSANOW, &raw_tio));
     is_raw = true;
-  } else {
+  } else if (!not_tty) {
     // still tries to disable echo
     r = tcgetattr(STDERR_FILENO, &prev_tio);
     if (-1 != r) {
       struct termios noecho_tio = prev_tio;
       noecho_tio.c_lflag&= ~(ECHO | ECHONL);
       try(r, tcsetattr(STDERR_FILENO, TCSANOW, &noecho_tio));
-    }
+    } else not_tty = true;
   }
 
   // send size to server
@@ -173,6 +174,11 @@ int client(char const* id, char const* leader_key, char** send_sequence, int seq
       } // if raw mode
 
       if (!leader_found) try(r, write(sock, buf, len));
+    } // user input
+
+    if (POLLHUP & fds[IDX_USER].revents) {
+      len = 0;
+      break;
     }
 
     len = 0;
