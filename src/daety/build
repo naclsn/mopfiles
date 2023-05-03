@@ -7,8 +7,12 @@ for f in *.[ch]
       break
   fi
 done
-if [ run = $1 ]
-  then
+case $1 in
+  run)
     shift
     does exec ./daety "$@"
-fi
+    ;;
+  install)
+    does cp ./daety ${PREFIX:-/usr/local}/bin/daety
+    ;;
+esac

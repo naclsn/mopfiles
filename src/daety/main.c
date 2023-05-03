@@ -44,6 +44,23 @@ void usage(char const* self) {
   );
 }
 
+void make_id(char** argv, char* dst, int max_len) {
+  // NOTE: it uses all of prog and args, maybe just the prog is enough?
+  // TODO: proper (eg. do not use special charaters (maybe hash it?))
+  char* start = dst;
+  for (char** a = argv; *a && dst-start < 1023; a++) {
+    char const* src = *a;
+    while ('\0' != (*dst++ = *src++) && dst-start < 1023);
+    dst[-1] = ' ';
+  }
+  dst[-1] = '\0';
+}
+
+void put_id(char* id) {
+  // TODO: will need to reverse-id here (ie get command from socket filename)
+  puts(id+strlen(LOC_ID_PFX));
+}
+
 int main(int argc, char** argv) {
   char const* self = *argv++;
   #define argis(_x) 0 == strcmp(_x, *argv)
@@ -72,7 +89,7 @@ int main(int argc, char** argv) {
     struct dirent* dir;
     while ((dir = readdir(d)) != NULL) {
       if (0 == memcmp(LOC_ID_PFX, dir->d_name, strlen(LOC_ID_PFX)))
-        puts(dir->d_name+strlen(LOC_ID_PFX)); // ZZZ: will need to reverse-id here
+        put_id(dir->d_name);
     }
     closedir(d);
     return EXIT_SUCCESS;
@@ -142,24 +159,18 @@ int main(int argc, char** argv) {
   } // while arg
 
   // if an id or addr is given, 'not --server' can operate, same with '--kill'
-  bool wegood = (NULL != id || NULL != addr) && (!is_server || is_kill);
-  if (!wegood && (NULL == *argv || '\0' == (*argv)[0])) {
+  bool is_client = (NULL != id || NULL != addr) && (!is_server || is_kill);
+  if (!is_client && (NULL == *argv || '\0' == (*argv)[0])) {
     usage(self);
     return EXIT_FAILURE;
   }
 
   char id_buf[1024] = TMP_DIR "/" LOC_ID_PFX;
   if (NULL == addr) {
-    if (NULL == id) {
-      // NOTE: it uses all of prog and args, maybe just the prog is enough?
-      char* dst = id_buf+strlen(id_buf);
-      for (char** a = argv; *a && dst-id_buf < 1023; a++) {
-        char const* src = *a;
-        while ('\0' != (*dst++ = *src++) && dst-id_buf < 1023);
-        dst[-1] = ' ';
-      }
-      dst[-1] = '\0';
-    } else strncpy(id_buf+strlen(id_buf), id, 1024-strlen(id_buf));
+    if (NULL == id)
+      make_id(argv, id_buf+strlen(id_buf), 1024);
+    else
+      strncpy(id_buf+strlen(id_buf), id, 1024-strlen(id_buf));
   } else strcpy(id_buf, addr); // --addr
   id = id_buf;
 

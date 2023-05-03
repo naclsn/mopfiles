@@ -109,6 +109,14 @@ void server(char const* id, char** args, bool daemon, bool verbose, bool quiet) 
   union any_addr addr;
   try(r, fill_addr(use, &addr, id));
 
+  if (!quiet) {
+    printf("server: id '%s', use ", id);
+    switch (use) {
+      case USE_LOCAL: puts("local"); break;
+      case USE_IPV4: puts("IPv4"); break;
+    }
+  }
+
   if (daemon) {
     pid_t dpid;
     try(dpid, fork());
