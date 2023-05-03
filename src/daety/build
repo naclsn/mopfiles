@@ -9,10 +9,10 @@ if [ README.md -nt usage.inc ]
       /--help/ { f = 1 }
     ' | sed 1s/.\\/daety/%s/ >usage.inc
 fi
-for f in *.[ch]
+for f in *.[ch] usage.inc
   do if [ $f -nt daety ]
     then
-      does cc main.c client.c server.c socket.c -DVERS=0.1.6-`git rev-parse --short HEAD 2>/dev/null` -o daety -Wall -Wextra -pedantic
+      does cc main.c client.c server.c socket.c -DVERS=0.1.7-`git rev-parse --short HEAD 2>/dev/null` -o daety -Wall -Wextra -pedantic
       break
   fi
 done

@@ -25,21 +25,48 @@ void usage(char const* self) {
   );
 }
 
+/// similar to php's `urlencode`, that is only 'A-Za-z_.-' are kept as is and '+' is a space
 void make_id(char** argv, char* dst, int max_len) {
-  // NOTE: it uses all of prog and args, maybe just the prog is enough?
-  // TODO: proper (eg. do not use special charaters (maybe hash it?))
-  char* start = dst;
+  char const* const start = dst;
   for (char** a = argv; *a && dst-start < max_len-1; a++) {
     char const* src = *a;
-    while ('\0' != (*dst++ = *src++) && dst-start < max_len-1);
-    dst[-1] = ' ';
+    while ('\0' != *src && dst-start < max_len-1) {
+      char c = *src++;
+      if ('-' == c || '.' == c || '_' == c
+        || ('0' <= c && c <= '9')
+        || ('A' <= c && c <= 'Z')
+        || ('a' <= c && c <= 'z')
+      ) {
+        *dst++ = c;
+      } else if (' ' == c) {
+        *dst++ = '+';
+      } else {
+        *dst++ = '%';
+        if (dst-start < max_len-1) {
+          char h = (c>>4) & 0xf, l = c & 0xf;
+          *dst++ = h<10 ? h+'0' : h+'A'-10;
+          *dst++ = l<10 ? l+'0' : l+'A'-10;
+        }
+      }
+    }
+    *dst++ = '+';
   }
   dst[-1] = '\0';
 }
 
-void put_id(char* id) {
-  // TODO: will need to reverse-id here (ie get command from socket filename)
-  puts(id+strlen(LOC_ID_PFX));
+/// decode from `make_id` and output it right away, with a trailing '\n'
+void puts_id(char const* id) {
+  id+= strlen(LOC_ID_PFX);
+  while ('\0' != *id) {
+    char c = *id++;
+    if ('%' == c) {
+      char dh = *id++;
+      char dl = *id++;
+      char h = dh<'A' ? dh-'0' : dh-'A'+10, l = dl<'A' ? dl-'0' : dl-'A'+10;
+      putchar((h<<4) | l);
+    } else putchar('+' == c ? ' ' : c);
+  }
+  putchar('\n');
 }
 
 int main(int argc, char** argv) {
@@ -70,7 +97,7 @@ int main(int argc, char** argv) {
     struct dirent* dir;
     while ((dir = readdir(d)) != NULL) {
       if (0 == memcmp(LOC_ID_PFX, dir->d_name, strlen(LOC_ID_PFX)))
-        put_id(dir->d_name);
+        puts_id(dir->d_name);
     }
     closedir(d);
     return EXIT_SUCCESS;

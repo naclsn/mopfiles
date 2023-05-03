@@ -21,7 +21,7 @@
 #include <unistd.h>
 
 #define TMP_DIR "/tmp"
-#define LOC_ID_PFX "daety-"
+#define LOC_ID_PFX "daety~~"
 
 // these should be enough most of the time
 #define ESC "\033"

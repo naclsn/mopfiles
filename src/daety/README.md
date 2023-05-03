@@ -8,28 +8,35 @@ $ ./build # or just cc *.c -o daety
 $ ./daety --help
 Usage: ./daety [opts] <prog> [<args...>]
 
---help    -h         display this help
---version            show the build version
---list    -l         list known (local) servers
---kill               terminate the server
+  --help    -h         display this help
+  --version            show the build version
+  --list    -l         list known (local) servers
+  --kill               terminate the server
 
 shared client/server:
---id      -i <id>    the default is form prog and args
---addr    -a <addr>  (WIP)
+  --id      -i <id>    the default is form prog and args
+  --addr    -a <addr>  similar to id, but for an IP address
+                       addr and id are mutually exclusive;
+                       addr should be of the form
+                         IPv4: '123.123.123.123:1234'
 
 server only:
---server  -s         starts only the server
---quiet   -q         (only when -s)
---verbose            (only when -s)
+  --server  -s         starts only the server
+  --quiet   -q         do not output anything, and
+  --verbose            output everything going through;
+                       by default the server outputs some
+                       information on what it going on
 
 client only:
---key     -k <key>   use the following leader key
---cmd     -c <keys..> --
-                     send the sequence upon connection
-                     joined with not separator
-                     must be terminated with --
-                     ^x are translated to controls
---cooked             do not set raw mode
+  --key     -k <key>   use the following leader key
+                       (use ^x notation for controls)
+  --cmd     -c <keys..> --
+                       send the sequence upon connection
+                       (joined with no separator); it
+                       must be terminated with --
+                       (use ^x notation for controls)
+  --cooked             do not set raw mode; in that case
+                       the leader key has no meaning
 ```
 <!-- side note: this --help message is used in building the actual application -->
 
