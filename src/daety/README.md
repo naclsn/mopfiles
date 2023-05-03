@@ -31,6 +31,7 @@ client only:
                      ^x are translated to controls
 --cooked             do not set raw mode
 ```
+<!-- side note: this --help message is used in building the actual application -->
 
 ```console
 $ ./daety vi # in one terminal

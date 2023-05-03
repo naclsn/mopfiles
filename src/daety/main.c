@@ -16,30 +16,11 @@ void _die() {
 
 void usage(char const* self) {
   printf(
-    "Usage: %s [opts] <prog> [<args...>]\n"
-    "\n"
-    "--help    -h         display this help\n"
-    "--version            show the build version\n"
-    "--list    -l         list known (local) servers\n"
-    "--kill               terminate the server\n"
-    "\n"
-    "shared client/server:\n"
-    "--id      -i <id>    the default is from prog args\n"
-    "--addr    -a <addr>  (WIP)\n"
-    "\n"
-    "server only:\n"
-    "--server  -s         starts only the server\n"
-    "--quiet   -q         (only when -s)\n"
-    "--verbose            (only when -s)\n"
-    "\n"
-    "client only:\n"
-    "--key     -k <key>   use the following leader key\n"
-    "--cmd     -c <keys..> --\n"
-    "                     send the sequence upon connection\n"
-    "                     joined with not separator\n"
-    "                     must be terminated with --\n"
-    "                     ^x are translated to controls\n"
-    "--cooked             do not set raw mode\n"
+    #ifndef VERS
+    "Usage: %s <...>\n"
+    #else
+    #include "usage.inc"
+    #endif // VERS
     , self
   );
 }
@@ -48,9 +29,9 @@ void make_id(char** argv, char* dst, int max_len) {
   // NOTE: it uses all of prog and args, maybe just the prog is enough?
   // TODO: proper (eg. do not use special charaters (maybe hash it?))
   char* start = dst;
-  for (char** a = argv; *a && dst-start < 1023; a++) {
+  for (char** a = argv; *a && dst-start < max_len-1; a++) {
     char const* src = *a;
-    while ('\0' != (*dst++ = *src++) && dst-start < 1023);
+    while ('\0' != (*dst++ = *src++) && dst-start < max_len-1);
     dst[-1] = ' ';
   }
   dst[-1] = '\0';
@@ -76,7 +57,7 @@ int main(int argc, char** argv) {
     #ifndef VERS
     #warning "no version defined (-DVERS, use the build script)"
     #define VERS (unversioned)
-    #endif
+    #endif // VERS
     puts(xtocstr(VERS));
     #undef xtocstr
     #undef tocstr
@@ -167,10 +148,8 @@ int main(int argc, char** argv) {
 
   char id_buf[1024] = TMP_DIR "/" LOC_ID_PFX;
   if (NULL == addr) {
-    if (NULL == id)
-      make_id(argv, id_buf+strlen(id_buf), 1024);
-    else
-      strncpy(id_buf+strlen(id_buf), id, 1024-strlen(id_buf));
+    if (NULL == id) make_id(argv, id_buf+strlen(id_buf), 1024);
+    else strncpy(id_buf+strlen(id_buf), id, 1024-strlen(id_buf));
   } else strcpy(id_buf, addr); // --addr
   id = id_buf;
 

@@ -1,5 +1,14 @@
 #!/bin/sh -e
-does() { echo "$@"; "$@"; }
+does() { echo "build: $@"; "$@"; }
+if [ README.md -nt usage.inc ]
+  then
+    echo 'build: <README.md .. >usage.inc'
+    <README.md awk '
+      "```" == $0 { exit }
+      f { printf"\""$0"\\n\"\n" }
+      /--help/ { f = 1 }
+    ' | sed 1s/.\\/daety/%s/ >usage.inc
+fi
 for f in *.[ch]
   do if [ $f -nt daety ]
     then
