@@ -65,7 +65,11 @@ static pid_t fork_program(char** args) {
   if (0 < cpid) return cpid;
 
   // child (program)
-  try(cpid, execvp(args[0], args)); // TODO: catch and report err
+  execvp(args[0], args);
+
+  // catch and report err
+  fprintf(stderr, ESC CUSTOM_TERM_EXERR "%ie", errno);
+  _exit(127);
 
 finally:
   _die();
@@ -180,7 +184,6 @@ void server(char const* id, char** args, bool daemon, bool verbose, bool quiet) 
               // client indicating winsize change
               int w = 0, h = 0;
               char const* const start = found;
-              if (!quiet) puts("server: received winsize change");
 
               // ^[[={w};{h}w
               found+= strlen(CUSTOM_TERM_WINSIZE) + 1;
@@ -203,6 +206,8 @@ void server(char const* id, char** args, bool daemon, bool verbose, bool quiet) 
               if (0 == h || 0 == rest || 'w' != *found) continue;
               found++;
               rest--;
+
+              if (!quiet) puts("server: received winsize change");
 
               wss[i-IDX_CLIS].ws_col = w;
               wss[i-IDX_CLIS].ws_row = h;
@@ -241,7 +246,7 @@ void server(char const* id, char** args, bool daemon, bool verbose, bool quiet) 
       break;
     }
 
-    // program output (only if there are clients listening)
+    // program output
     if (POLLIN & fds[IDX_TERM].revents) {
       try(len, read(fds[IDX_TERM].fd, buf, BUF_SIZE));
       if (!quiet) {
@@ -271,6 +276,24 @@ void server(char const* id, char** args, bool daemon, bool verbose, bool quiet) 
         } else if (is_alt && 0 == memcmp(TERM_RMCUP, found+1, strlen(TERM_RMCUP))) {
           if (!quiet) puts("server: leaving alt");
           is_alt = false;
+
+        } else if (0 == memcmp(CUSTOM_TERM_EXERR, found+1, strlen(CUSTOM_TERM_EXERR))) {
+          // scan for error from child at execvp (see in the printf in fork_program)
+          found+= strlen(CUSTOM_TERM_EXERR) + 1;
+          rest-= strlen(CUSTOM_TERM_EXERR) + 1;
+
+          int exerr = 0;
+          while ('0' <= *found && *found <= '9' && 0 < rest--)
+            exerr = 10*exerr + (*found++ - '0');
+
+          if (0 == exerr || 'e' != *found) continue;
+
+          if (!quiet) printf("server: program failed to start\nserver: '%s'\n", strerror(exerr));
+          // simply break out, the server will normally
+          // exit when it polls for finished program
+          break;
+          // TODO: because of the daemon, bubbling exerr back to main is awkward...
+          // could keep the server around enough for the first client to get it
         }
       } // while scan for ESC
     } // if program output

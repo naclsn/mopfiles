@@ -209,6 +209,7 @@ int main(int argc, char** argv) {
 
     waitpid(spid, NULL, 0);
 
+    // TODO: get rid of it for a proper solution (eg. semaphore)
     sleep(1); // ZZZ: just in case
 
     if (-1 == client(id, key, cmd, cmd_len, is_cooked)) {

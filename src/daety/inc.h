@@ -29,10 +29,13 @@
 #define TERM_SMCUP "[?1049h"
 #define TERM_RMCUP "[?1049l"
 // fake CSI seq used by client to indicate SIGWINCH to server:
-// "^[[={w};{h}w"; width and height are up to 3 digits
-#define CUSTOM_TERM_WINSIZE "[="
-// fake CSI seq to terminate program  pqrstuvwxyz
-#define CUSTOM_TERM_TERM "[=/*-*/~"
+// "^[[==:{w};{h}w"; width and height are up to 3 digits
+#define CUSTOM_TERM_WINSIZE "[==:"
+// fake CSI seq to terminate program
+#define CUSTOM_TERM_TERM "[==!/*-*/q"
+// fake CSI seq to indicate starting failed:
+// "^[[==?{e}e"
+#define CUSTOM_TERM_EXERR "[==?"
 
 extern char const* errfile;
 extern unsigned int errline;
