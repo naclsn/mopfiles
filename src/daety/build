@@ -2,7 +2,7 @@
 does() { echo "build: $@"; "$@"; }
 if [ README.md -nt usage.inc ]
   then
-    echo 'build: <README.md .. >usage.inc'
+    echo 'build: generating usage.inc from README.md'
     <README.md awk '
       "```" == $0 { exit }
       f { printf"\""$0"\\n\"\n" }
@@ -17,11 +17,8 @@ for f in *.[ch] usage.inc
   fi
 done
 case $1 in
-  run)
-    shift
-    does exec ./daety "$@"
-    ;;
-  install)
-    does cp ./daety ${PREFIX:-/usr/local}/bin/daety
-    ;;
+  run) shift; does exec ./daety "$@" ;;
+  install) does cp ./daety ${PREFIX:-/usr/local}/bin/daety ;;
+  '') echo 'build: done' ;;
+  *) echo "build: unknown command '$1'; only 'run' and 'install'" ;;
 esac

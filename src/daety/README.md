@@ -26,6 +26,10 @@ server only:
   --verbose            output everything going through;
                        by default the server outputs some
                        information on what it going on
+  --track              (also when starting first client)
+                       the server will keep track on all
+                       the program sent, and stream it back
+                       to new incoming clients
 
 client only:
   --key     -k <key>   use the following leader key
@@ -81,7 +85,7 @@ interactive TUI), `--cooked` can be used.
 ### Notes
 
 Both the client and the server are perfectly dumb and
-oblivious to transiting bytes. Nothing is stored. However,
-the server scans the program's output to track entering /
-leaving alternate buffer, and the client scans for the
-leader key.
+oblivious to transiting bytes. Nothing is stored (well
+except for `--track`). However, the server scans the
+program's output to track entering / leaving alternate
+buffer, and the client scans for the leader key.

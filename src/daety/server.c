@@ -5,7 +5,8 @@
 #define IDX_CLIS 2
 #define IDX_COUNT 8
 
-static char const* filename = NULL; // name of a file to remove at cleanup
+static char const* local_socket_filename = NULL;
+static FILE* track_file = NULL;
 static struct pollfd fds[IDX_COUNT];
 static int fds_count = 0;
 static pid_t cpid = 0;
@@ -19,7 +20,8 @@ static void cleanup(int sign) {
   #define lastsay(_c) write(STDOUT_FILENO, "server: " _c "\n", strlen("server: " _c "\n"));
 
   lastsay("cleaning");
-  if (filename) unlink(filename);
+  if (local_socket_filename) unlink(local_socket_filename);
+  if (track_file) fclose(track_file);
 
   if (terminate) {
     // program did not terminate by itself (or from user input)
@@ -107,7 +109,7 @@ static void putesc(char const* buf, int len) {
   } while (--len);
 }
 
-void server(char const* id, char** args, bool daemon, bool verbose, bool quiet) {
+void server(char const* id, char** args, bool daemon, bool verbose, bool quiet, bool track) {
   int r;
   enum use_socket use = identify_use(id);
   union any_addr addr;
@@ -141,17 +143,19 @@ void server(char const* id, char** args, bool daemon, bool verbose, bool quiet) 
   sig_handle(SIGINT, cleanup, SA_RESETHAND);
   sig_handle(SIGTERM, cleanup, SA_RESETHAND);
 
-  if (USE_LOCAL == use) filename = id;
+  if (USE_LOCAL == use) local_socket_filename = id;
   try(fds[IDX_SOCK].fd, bind_sock(use, &addr, IDX_COUNT-IDX_CLIS));
 
   fds[IDX_TERM].events = POLLIN;
   fds[IDX_SOCK].events = POLLIN;
   fds_count = IDX_CLIS;
 
+  if (track) track_file = tmpfile();
+
   if (!quiet) puts("server: listening");
 
   char buf[BUF_SIZE];
-  int len;
+  ssize_t len;
   while (1) {
     int n;
     try(n, poll(fds, fds_count, -1));
@@ -164,7 +168,7 @@ void server(char const* id, char** args, bool daemon, bool verbose, bool quiet) 
       if (!remove && POLLIN & fds[i].revents) {
         try(len, read(fds[i].fd, buf, BUF_SIZE));
         if (!quiet) {
-          printf("<%d> (%dB) ", fds[i].fd, len);
+          printf("<%d> (%zuB) ", fds[i].fd, len);
           if (verbose) putesc(buf, len);
           putchar('\n');
         }
@@ -250,7 +254,7 @@ void server(char const* id, char** args, bool daemon, bool verbose, bool quiet) 
     if (POLLIN & fds[IDX_TERM].revents) {
       try(len, read(fds[IDX_TERM].fd, buf, BUF_SIZE));
       if (!quiet) {
-        printf("<prog> (%dB) ", len);
+        printf("<prog> (%zuB) ", len);
         if (verbose) putesc(buf, len);
         putchar('\n');
       }
@@ -264,8 +268,10 @@ void server(char const* id, char** args, bool daemon, bool verbose, bool quiet) 
       // echo back to every clients
       for (int j = IDX_CLIS; j < fds_count; j++)
         try(r, write(fds[j].fd, buf, len));
+      if (track) fwrite(buf, 1, len, track_file);
 
-      // scan for enter/leave alt
+      // scan for enter/leave alt and exec errors
+      // (rem: is_alt only used when !track)
       char const* found = buf-1;
       int rest = len;
       while (0 < rest && NULL != (found = memchr(found+1, *ESC, rest))) {
@@ -310,8 +316,22 @@ void server(char const* id, char** args, bool daemon, bool verbose, bool quiet) 
       // init winsize for this client
       wss[fds_count-IDX_CLIS] = curr_ws;
 
-      // enter alt screen if needed (and other term states that i dont know of)
-      if (is_alt) try(r, write(cli, ESC TERM_SMCUP, strlen(ESC TERM_SMCUP)));
+      if (track) {
+        // everything was tracked, so stream it back
+        fflush(track_file);
+        rewind(track_file);
+        if (!quiet) puts("server: streaming back up to speed");
+        size_t total = 0;
+        while (0 == feof(track_file)) {
+          len = fread(buf, 1, BUF_SIZE, track_file);
+          total+= len;
+          try(r, write(cli, buf, len));
+        }
+        if (!quiet) printf("server: done, %zuB\n", total);
+      } else {
+        // enter alt screen if needed (and other term states that i dont know of)
+        if (is_alt) try(r, write(cli, ESC TERM_SMCUP, strlen(ESC TERM_SMCUP)));
+      }
 
       fds_count++;
     } // if new connection

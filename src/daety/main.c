@@ -108,6 +108,7 @@ int main(int argc, char** argv) {
   bool is_server = false;
   bool is_verbose = false;
   bool is_quiet = false;
+  bool is_track = false;
   char const* key = "^\\";
   char** cmd = NULL;
   int cmd_len = 0;
@@ -135,6 +136,7 @@ int main(int argc, char** argv) {
         else if (argis("--server"))  is_server = true;
         else if (argis("--verbose")) is_verbose = true;
         else if (argis("--quiet"))   is_quiet = true;
+        else if (argis("--track"))   is_track = true;
         else if (argis("--key"))     key = *++argv;
         else if (argis("--cmd"))     cmd = argv;
         else if (argis("--cooked"))  is_cooked = true;
@@ -191,7 +193,7 @@ int main(int argc, char** argv) {
   }
 
   if (is_server) {
-    server(id, argv, false, is_verbose, is_quiet);
+    server(id, argv, false, is_verbose, is_quiet, is_track);
     return EXIT_SUCCESS;
   }
 
@@ -203,7 +205,7 @@ int main(int argc, char** argv) {
     if (spid < 0) return EXIT_FAILURE;
 
     if (0 == spid) {
-      server(id, argv, true, false, true);
+      server(id, argv, true, false, true, is_track);
       return EXIT_SUCCESS;
     }
 
