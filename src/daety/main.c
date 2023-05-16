@@ -106,6 +106,7 @@ int main(int argc, char** argv) {
   char const* id = NULL;
   char const* addr = NULL;
   bool is_server = false;
+  char const* cwd = NULL;
   bool is_verbose = false;
   bool is_quiet = false;
   bool is_track = false;
@@ -134,6 +135,7 @@ int main(int argc, char** argv) {
         else if (argis("--id"))      id = *++argv;
         else if (argis("--addr"))    addr = *++argv;
         else if (argis("--server"))  is_server = true;
+        else if (argis("--cwd"))     cwd = *++argv;
         else if (argis("--verbose")) is_verbose = true;
         else if (argis("--quiet"))   is_quiet = true;
         else if (argis("--track"))   is_track = true;
@@ -153,6 +155,7 @@ int main(int argc, char** argv) {
             case 'i': id = *++argv;     break;
             case 'a': addr = *++argv;   break;
             case 's': is_server = true; break;
+            case 'C': cwd = *++argv;    break;
             case 'q': is_quiet = true;  break;
             case 'k': key = *++argv;    break;
             case 'c': cmd = argv;       break;
@@ -193,7 +196,7 @@ int main(int argc, char** argv) {
   }
 
   if (is_server) {
-    server(id, argv, false, is_verbose, is_quiet, is_track);
+    server(id, argv, cwd, false, is_verbose, is_quiet, is_track);
     return EXIT_SUCCESS;
   }
 
@@ -205,7 +208,7 @@ int main(int argc, char** argv) {
     if (spid < 0) return EXIT_FAILURE;
 
     if (0 == spid) {
-      server(id, argv, true, false, true, is_track);
+      server(id, argv, cwd, true, false, true, is_track);
       return EXIT_SUCCESS;
     }
 

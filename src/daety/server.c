@@ -109,7 +109,7 @@ static void putesc(char const* buf, int len) {
   } while (--len);
 }
 
-void server(char const* id, char** args, bool daemon, bool verbose, bool quiet, bool track) {
+void server(char const* id, char** args, char const* cwd, bool daemon, bool verbose, bool quiet, bool track) {
   int r;
   enum use_socket use = identify_use(id);
   union any_addr addr;
@@ -132,6 +132,10 @@ void server(char const* id, char** args, bool daemon, bool verbose, bool quiet, 
     close(STDERR_FILENO);
   }
 
+  if (NULL != cwd) {
+    if (!quiet) printf("server: changing working directory to '%s'\n", cwd);
+    try(r, chdir(cwd));
+  }
   cpid = fork_program(args);
 
   if (daemon) {
@@ -338,7 +342,9 @@ void server(char const* id, char** args, bool daemon, bool verbose, bool quiet, 
   } // while (poll)
 
 finally:
-  if (errdid) terminate = true;
-  cleanup(0);
+  if (0 != cpid) {
+    if (errdid) terminate = true;
+    cleanup(0);
+  }
   if (errdid) _die();
 }

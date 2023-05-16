@@ -22,6 +22,7 @@ shared client/server:
 
 server only:
   --server  -s         starts only the server
+  --cwd     -C         change working directory
   --quiet   -q         do not output anything, and
   --verbose            output everything going through;
                        by default the server outputs some
