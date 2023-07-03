@@ -25,7 +25,7 @@ def Init(): dict<any>
     return { width: W, height: H, fps: 12, keys: split("q r h j k l \<left> \<down> \<up> \<right>") }
 enddef
 
-def Btnp(key: string)
+def Btnp(id: number, key: string)
     const foldarr = { ["\<left>"]: 'h', ["\<down>"]: 'j', ["\<up>"]: 'k', ["\<right>"]: 'l' }
     d_pend = get(foldarr, key, key)
 enddef
@@ -36,8 +36,8 @@ def Loop(id: number): bool
     endif
 
     if first
-        hien.Setr(id, 0, W, 0, H, '#')
-        hien.Setr(id, 1, W - 1, 1, H - 1, ' ')
+        hien.Setr(id, 0, 0, W, H, '#')
+        hien.Setr(id, 1, 1, W - 1, H - 1, ' ')
         hien.Set(id, ax, ay, '@')
         first = false
 

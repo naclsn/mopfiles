@@ -15,7 +15,7 @@ enddef
 # entries added have a `:Play[.name]`, key is the `.name`
 #   name: string
 #   Init: func(): dict<any>  see Register for its return type
-#   Btnp: func(string)
+#   Btnp: func(number, string)
 #   Loop: func(number): bool
 var registred = {}
 # meta for a running instance, key is the bufnr (`id` in functions below)
@@ -48,7 +48,7 @@ def Play(name: string)
             elseif -1 == index(keys, key)
                 return false
             else
-                it.Btnp(key)
+                it.Btnp(bufid, key)
             endif
             return true
         },
@@ -73,7 +73,7 @@ enddef
 #   fps: number
 #   keys?: list<string>  keys that Btnp can receive (null means every keys)
 #                        non-captured keys will actually do editor stuff!
-export def Register(name: string, Init: func(): dict<any>, Btnp: func(string), Loop: func(number): bool)
+export def Register(name: string, Init: func(): dict<any>, Btnp: func(number, string), Loop: func(number): bool)
     registred[name] = { name: name, Init: Init, Btnp: Btnp, Loop: Loop }
     exe 'com! Play' .. name .. ' call Play("' .. name .. '")'
 enddef
@@ -91,7 +91,7 @@ export def In(v: number, v0: number, v1: number): bool
     return v0 <= v && v < v1
 enddef
 
-export def Setr(id: number, x0: number, x1: number, y0: number, y1: number, char: string)
+export def Setr(id: number, x0: number, y0: number, x1: number, y1: number, char: string)
     const repl = repeat(W(char), x1 - x0)
     for y in range(y0, y1 - 1)
         const ln = getbufline(id, y + 1)[0]
@@ -99,7 +99,7 @@ export def Setr(id: number, x0: number, x1: number, y0: number, y1: number, char
     endfor
 enddef
 
-export def Getr(id: number, x0: number, x1: number, y0: number, y1: number): list<list<string>>
+export def Getr(id: number, x0: number, y0: number, x1: number, y1: number): list<list<string>>
     final ret: list<list<string>> = []
     for y in range(y0, y1 - 1)
         add(ret, map(split(getbufline(id, y + 1)[0][x0 : x1 - 1], '\zs'), (_, c) => H(c)))
@@ -107,7 +107,7 @@ export def Getr(id: number, x0: number, x1: number, y0: number, y1: number): lis
     return ret
 enddef
 
-export def Inr(x: number, y: number, x0: number, x1: number, y0: number, y1: number): bool
+export def Inr(x: number, y: number, x0: number, y0: number, x1: number, y1: number): bool
     return x0 <= x && x < x1 && y0 <= y && y < y1
 enddef
 
