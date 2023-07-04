@@ -58,19 +58,26 @@ def Play(name: string)
     bufid = winbufnr(winid)
     #running_meta[bufid] = { id: bufid, lnwtext: {} }
 
-    timid = timer_start(1000 / pp.fps, (id) => {
+    if pp.fps <= 0
         if it.Loop(bufid)
-            timer_stop(id)
             popup_close(winid)
         endif
-    }, { repeat: -1 })
+    else
+        timid = timer_start(1000 / pp.fps, (id) => {
+            if it.Loop(bufid)
+                timer_stop(id)
+                popup_close(winid)
+            endif
+        }, { repeat: -1 })
+    endif
 enddef
 
 # note on Init's return type:
 # it should be a dictionary with the following keys:
 #   width: number
 #   height: number
-#   fps: number
+#   fps: number          if <1, runs Loop once then does not close (except if
+#                        Loop returned `true`)
 #   keys?: list<string>  keys that Btnp can receive (null means every keys)
 #                        non-captured keys will actually do editor stuff!
 export def Register(name: string, Init: func(): dict<any>, Btnp: func(number, string), Loop: func(number): bool)
@@ -109,6 +116,31 @@ enddef
 
 export def Inr(x: number, y: number, x0: number, y0: number, x1: number, y1: number): bool
     return x0 <= x && x < x1 && y0 <= y && y < y1
+enddef
+
+export def Copy(id: number, dx: number, dy: number, sx0: number, sy0: number, sx1: number, sy1: number)
+    final ls: list<string> = []
+    for sy in range(sy0, sy1 - 1)
+        add(ls, getbufline(id, sy + 1)[0])
+    endfor
+    for k in range(len(ls))
+        const ln = getbufline(id, dy + k + 1)[0]
+        setbufline(id, dy + k + 1, (0 == dx ? '' : ln[: dx - 1]) .. ls[k][sx0 : sx1 - 1] .. ln[dx + sx1 - sx0 :])
+    endfor
+enddef
+
+export def Move(id: number, dx: number, dy: number, sx0: number, sy0: number, sx1: number, sy1: number)
+    const repl = repeat(W(' '), sx1 - sx0)
+    final ls: list<string> = []
+    for sy in range(sy0, sy1 - 1)
+        const ln = getbufline(id, sy + 1)[0]
+        add(ls, ln)
+        setbufline(id, sy + 1, (0 == sx0 ? '' : ln[: sx0 - 1]) .. repl .. ln[sx1 :])
+    endfor
+    for k in range(len(ls))
+        const ln = getbufline(id, dy + k + 1)[0]
+        setbufline(id, dy + k + 1, (0 == dx ? '' : ln[: dx - 1]) .. ls[k][sx0 : sx1 - 1] .. ln[dx + sx1 - sx0 :])
+    endfor
 enddef
 
 export def Print(id: number, x: number, y: number, text: string)
