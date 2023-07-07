@@ -1,23 +1,22 @@
-fu s:w(h)
-    retu h
-    if 'nono' == a:h
-        retu nr2char(0x3003)
-    elsei 'maru' == a:h
-        retu nr2char(0x3007)
-    en
+fu s:fwch(h)
     retu nr2char(' ' == a:h ? 0x3000 : char2nr(a:h)+0xfee0)
 endf
 
-fu s:start()
-    enew
-    setl bt=nofile noswf
+fu s:goto(x, y)
+    cal setcharpos('.', [0, b:yoff+a:y, b:xoff+a:x, 0])
+endf
 
-    let b:empty = s:w(' ')
-    let b:walls = map(['|', '+', '-', '+', '|', '+', '-', '+'], 's:w(v:val)')
+fu s:start()
+    ene
+    setl bt=nofile nobl noswf
+
+    let b:empty = s:fwch(' ')
+    let b:walls = map(['|', '+', '-', '+', '|', '+', '-', '+'], 's:fwch(v:val)')
     let b:width = 20
     let b:height = 20
     let b:xoff = 3
     let b:yoff = 3
+    let b:frames = 0
 
     let m = repeat(' ', b:xoff-2)
     cal setline(1, repeat([''], b:yoff-2))
@@ -28,41 +27,48 @@ fu s:start()
     let b:rev_dir = {'h':'l', 'j':'k', 'k':'j', 'l':'h'}
 
     let b:dir = 'l'
-    map <buffer> h :let b:dir = 'l' == b:dir ? b:dir : 'h'<CR>
-    map <buffer> j :let b:dir = 'k' == b:dir ? b:dir : 'j'<CR>
-    map <buffer> k :let b:dir = 'j' == b:dir ? b:dir : 'k'<CR>
-    map <buffer> l :let b:dir = 'h' == b:dir ? b:dir : 'l'<CR>
-    map <buffer> <Left> h
-    map <buffer> <Down> j
-    map <buffer> <Up> k
-    map <buffer> <Right> l
+    let b:pend = []
+    map <buffer> <silent> h :cal add(b:pend, 'h')<CR>
+    map <buffer> <silent> j :cal add(b:pend, 'j')<CR>
+    map <buffer> <silent> k :cal add(b:pend, 'k')<CR>
+    map <buffer> <silent> l :cal add(b:pend, 'l')<CR>
+    map <buffer> <silent> <Left> h
+    map <buffer> <silent> <Down> j
+    map <buffer> <silent> <Up> k
+    map <buffer> <silent> <Right> l
 
-    let b:tail = s:w('#')
-    let b:head = s:w('e')
-    let b:apple = s:w('@')
+    let b:tail = s:fwch('o')
+    let b:head = s:fwch('e')
+    let b:apple = s:fwch('@')
 
-    let b:snake = ['l', 'j', 'j']
+    let b:snake = ['l', 'j']
 
-    cal s:goto([rand()%b:width, rand()%b:height])
+    cal s:goto(rand()%b:width, rand()%b:height)
     exe 'norm! r'..b:apple
 
-    cal s:goto([0,0])
+    cal s:goto(0, 0)
     for d in b:snake
         exe 'norm! r'..b:tail..d
     endfo
     exe 'norm! r'..b:head
 
-    cal timer_start(120, "\<SID>step", {'repeat':-1})
-endf
-
-fu s:goto(xy)
-    cal setcharpos('.', [0, b:yoff+a:xy[1], b:xoff+a:xy[0], 0])
+    cal timer_start(100, function("\<SID>step"), {'repeat':-1})
 endf
 
 fu s:step(timer)
     if !exists('b:dir')
         cal timer_stop(a:timer)
         retu
+    en
+
+    wh len(b:pend) && b:pend[0] == b:rev_dir[b:dir]
+        cal remove(b:pend, 0)
+    endw
+    if len(b:pend)
+        let b:dir = remove(b:pend, 0)
+        wh len(b:pend) && b:pend[0] == b:dir
+            cal remove(b:pend, 0)
+        endw
     en
 
     exe 'norm! '..b:dir..'vy'
@@ -79,7 +85,7 @@ fu s:step(timer)
         exe 'norm! '..b:rev_dir[b:dir]
         let p = getcharpos('.')
         wh b:empty != @"
-            cal s:goto([rand()%b:width, rand()%b:height])
+            cal s:goto(rand()%b:width, rand()%b:height)
             exe 'norm! vy'
         endw
         exe 'norm! r'..b:apple
@@ -88,6 +94,7 @@ fu s:step(timer)
         cal add(b:snake, b:dir)
 
     el
+        echom 'Score:' len(b:snake)*17
         cal timer_stop(a:timer)
         unm <buffer> h
         unm <buffer> j
