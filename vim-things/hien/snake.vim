@@ -25,29 +25,27 @@ def Init(): dict<any>
     return { width: W, height: H, fps: 12, keys: split("q r h j k l \<left> \<down> \<up> \<right>") }
 enddef
 
-def Btnp(id: number, key: string)
+def Btnp(id: number, key: string): bool
+    if 'q' == key
+        return true
+    elseif dead && 'r' == d_pend
+        hien.Erase(id, W / 2 - 4, H / 2 - 2, 16)
+        hien.Erase(id, W / 2 - 3, H / 2, 12)
+        Init()
+        return false
+    endif
+
     const foldarr = { ["\<left>"]: 'h', ["\<down>"]: 'j', ["\<up>"]: 'k', ["\<right>"]: 'l' }
     d_pend = get(foldarr, key, key)
+    return false
 enddef
 
 def Loop(id: number): bool
-    if 'q' == d_pend
-        return true
-    endif
-
     if first
         hien.Setr(id, 0, 0, W, H, '#')
         hien.Setr(id, 1, 1, W - 1, H - 1, ' ')
         hien.Set(id, ax, ay, '@')
         first = false
-
-    elseif dead
-        if 'r' == d_pend
-            hien.Erase(id, W / 2 - 4, H / 2 - 2, 16)
-            hien.Erase(id, W / 2 - 3, H / 2, 12)
-            Init()
-        endif
-        return false
     endif
 
     const next = len(tail) / 2 - 1 == head ? 0 : head + 1

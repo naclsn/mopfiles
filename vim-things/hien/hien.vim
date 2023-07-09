@@ -15,7 +15,7 @@ enddef
 # entries added have a `:Play[.name]`, key is the `.name`
 #   name: string
 #   Init: func(): dict<any>  see Register for its return type
-#   Btnp: func(number, string)
+#   Btnp: func(number, string): bool
 #   Loop: func(number): bool
 var registred = {}
 # meta for a running instance, key is the bufnr (`id` in functions below)
@@ -47,8 +47,9 @@ def Play(name: string)
                 popup_close(id)
             elseif -1 == index(keys, key)
                 return false
-            else
-                it.Btnp(bufid, key)
+            elseif it.Btnp(bufid, key)
+                timer_stop(timid)
+                popup_close(id)
             endif
             return true
         },
@@ -80,7 +81,7 @@ enddef
 #                        Loop returned `true`)
 #   keys?: list<string>  keys that Btnp can receive (null means every keys)
 #                        non-captured keys will actually do editor stuff!
-export def Register(name: string, Init: func(): dict<any>, Btnp: func(number, string), Loop: func(number): bool)
+export def Register(name: string, Init: func(): dict<any>, Btnp: func(number, string): bool, Loop: func(number): bool)
     registred[name] = { name: name, Init: Init, Btnp: Btnp, Loop: Loop }
     exe 'com! Play' .. name .. ' call Play("' .. name .. '")'
 enddef

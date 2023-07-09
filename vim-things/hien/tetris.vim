@@ -139,16 +139,26 @@ enddef
 def Init(): dict<any>
     first = true
     dead = false
+    pend = ''
     next_rand = rand() % len(pieces)
     score = 0
     return { width: 18, height: 21, fps: 6, keys: split("q r h j k l a e") }
 enddef
 
-def Btnp(id: number, key: string)
+def Btnp(id: number, key: string): bool
+    if 'q' == key
+        return true
+    elseif dead && 'r' == pend
+        score = -1
+        RedrawScore(id)
+        Init()
+        return false
+    endif
+
     pend = key
 
     if first || dead
-        return
+        return false
     endif
 
     if 'j' == pend
@@ -184,26 +194,17 @@ def Btnp(id: number, key: string)
             DoRotCur(id, 1)
         endif
     endif
+
+    return false
 enddef
 
 def Loop(id: number): bool
-    if 'q' == pend
-        return true
-    endif
-
     if first
         hien.Setr(id, 0, 0, 12, 21, '#')
         hien.Setr(id, 1, 0, 11, 20, ' ')
         TryPickPlace(id)
         RedrawScore(id)
         first = false
-    elseif dead
-        if 'r' == pend
-            score = -1
-            RedrawScore(id)
-            Init()
-        endif
-        return false
     endif
 
     if CanMoveCur(id, 0, 1)
