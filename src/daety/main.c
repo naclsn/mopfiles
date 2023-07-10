@@ -26,9 +26,9 @@ void usage(char const* self) {
 }
 
 /// similar to php's `urlencode`, that is only 'A-Za-z_.-' are kept as is and '+' is a space
-void make_id(char** argv, char* dst, int max_len) {
+void make_id(char const** argv, char* dst, int max_len) {
   char const* const start = dst;
-  for (char** a = argv; *a && dst-start < max_len-1; a++) {
+  for (char const** a = argv; *a && dst-start < max_len-1; a++) {
     char const* src = *a;
     while ('\0' != *src && dst-start < max_len-1) {
       char c = *src++;
@@ -69,7 +69,7 @@ void puts_id(char const* id) {
   putchar('\n');
 }
 
-int main(int argc, char** argv) {
+int main(int argc, char const** argv) {
   char const* self = *argv++;
   #define argis(_x) 0 == strcmp(_x, *argv)
 
@@ -111,7 +111,7 @@ int main(int argc, char** argv) {
   bool is_quiet = false;
   bool is_track = false;
   char const* key = "^\\";
-  char** cmd = NULL;
+  char const** cmd = NULL;
   int cmd_len = 0;
   bool is_cooked = false;
   bool is_kill = false;
@@ -178,16 +178,22 @@ int main(int argc, char** argv) {
     return EXIT_FAILURE;
   }
 
+  // id built form --addr or --id or argv, whichever is there
   char id_buf[1024] = TMP_DIR "/" LOC_ID_PFX;
-  if (NULL == addr) {
-    if (NULL == id) make_id(argv, id_buf+strlen(id_buf), 1024);
-    else strncpy(id_buf+strlen(id_buf), id, 1024-strlen(id_buf));
-  } else strcpy(id_buf, addr); // --addr
+  int id_off = strlen(TMP_DIR "/" LOC_ID_PFX);
+  if (NULL != addr) {
+    char const* argv[2] = {addr, NULL};
+    make_id(argv, id_buf+id_off, 1024-id_off);
+  } else if (NULL != id) {
+    char const* argv[2] = {id, NULL};
+    make_id(argv, id_buf+id_off, 1024-id_off);
+  } else make_id(argv, id_buf+id_off, 1024-id_off);
   id = id_buf;
+  puts(id);
 
   if (is_kill) {
     // NULL indicates client to exit right after sending
-    char* term_cmd[2] = {ESC CUSTOM_TERM_TERM, NULL};
+    char const* term_cmd[2] = {ESC CUSTOM_TERM_TERM, NULL};
     if (-1 == client(id, key, term_cmd, 1, true)) {
       puts("Could not join server");
       return EXIT_FAILURE;

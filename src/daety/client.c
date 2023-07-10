@@ -103,7 +103,7 @@ static int parse_key(char const* ser, char* de, int max_len) {
   return r;
 }
 
-int client(char const* id, char const* leader_key, char** send_sequence, int sequence_len, bool skip_raw) {
+int client(char const* id, char const* leader_key, char const** send_sequence, int sequence_len, bool skip_raw) {
   int r;
   enum use_socket use = identify_use(id);
   union any_addr addr;

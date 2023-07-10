@@ -58,7 +58,7 @@ static void cleanup(int sign) {
 }
 
 /// fork and start program on a new pty
-static pid_t fork_program(char** args) {
+static pid_t fork_program(char const** args) {
   pid_t cpid;
   try(cpid, forkpty(&fds[IDX_TERM].fd, NULL, NULL, NULL));
   fds_count++;
@@ -67,7 +67,7 @@ static pid_t fork_program(char** args) {
   if (0 < cpid) return cpid;
 
   // child (program)
-  execvp(args[0], args);
+  execvp(args[0], (char**)args);
 
   // catch and report err
   fprintf(stderr, ESC CUSTOM_TERM_EXERR "%ie", errno);
@@ -89,7 +89,7 @@ static int update_winsize(bool quiet) {
       if (wss[k].ws_row < curr_ws.ws_row) curr_ws.ws_row = wss[k].ws_row;
     }
   } else {
-    // use a 'standard' 80x24
+    // use a traditional 80x24
     curr_ws.ws_col = 80;
     curr_ws.ws_row = 24;
   }
@@ -109,7 +109,7 @@ static void putesc(char const* buf, int len) {
   } while (--len);
 }
 
-void server(char const* id, char** args, char const* cwd, bool daemon, bool verbose, bool quiet, bool track) {
+void server(char const* id, char const** args, char const* cwd, bool daemon, bool verbose, bool quiet, bool track) {
   int r;
   enum use_socket use = identify_use(id);
   union any_addr addr;
