@@ -121,8 +121,8 @@ int client(char const* id, char const* leader_key, char const** send_sequence, i
   if (send_sequence) {
     char buf[BUF_SIZE];
     for (; 0 < sequence_len; sequence_len--, send_sequence++) {
-      // NULL element indicates end of programmatic input (used by eg. '--kill')
-      if (NULL == *send_sequence) goto finally;
+      // empty element indicates end of programmatic input (used by eg. '--kill')
+      if ('\0' == (*send_sequence)[0]) goto finally;
       int len = parse_key(*send_sequence, buf, BUF_SIZE);
       try(r, write(sock, buf, len));
     }

@@ -38,8 +38,11 @@ client only:
   --cmd     -c <keys..> --
                        send the sequence upon connection
                        (joined with no separator); it
-                       must be terminated with --
+                       must be terminated with -- even
+                       if there are no args after it
                        (use ^x notation for controls)
+                       an empty string indicates that the
+                       client should stop after sending
   --cooked             do not set raw mode; in that case
                        the leader key has no meaning
 ```

@@ -14,8 +14,9 @@ void _die() {
   exit(errno);
 }
 
-void usage(char const* self) {
-  printf(
+void usage(char const* self, char const* may_errmsg) {
+  if (may_errmsg) printf("Error: %s\n  see %s --help for\n", may_errmsg, self);
+  else printf(
     #ifndef VERS
     "Usage: %s <...>\n"
     #else
@@ -71,10 +72,10 @@ void puts_id(char const* id) {
 
 int main(int argc, char const** argv) {
   char const* self = *argv++;
-  #define argis(_x) 0 == strcmp(_x, *argv)
+  #define argis(_x) (0 == strcmp(_x, *argv))
 
   if (0 == --argc || argis("--help") || argis("-h")) {
-    usage(self);
+    usage(self, NULL);
     return EXIT_FAILURE;
   }
 
@@ -124,6 +125,16 @@ int main(int argc, char const** argv) {
         break;
       }
       cmd_len++;
+      // indicates that client should stop right after sending the sequence
+      if ('\0' == (*argv)[0]) {
+        argc--;
+        argv++;
+        if (!argis("--")) {
+          usage(self, "expected a `--` after an empty `--cmd` element");
+          return EXIT_FAILURE;
+        }
+        break;
+      }
     }
 
     else if ('-' == (*argv)[0]) {
@@ -171,10 +182,11 @@ int main(int argc, char const** argv) {
     argv++;
   } // while arg
 
-  // if an id or addr is given, 'not --server' can operate, same with '--kill'
-  bool is_client = (NULL != id || NULL != addr) && (!is_server || is_kill);
+  // if an id or addr is given, 'not --server' can operate;
+  // in other words, if not a client, it needs program args
+  bool is_client = (NULL != id || NULL != addr) && !is_server;
   if (!is_client && (NULL == *argv || '\0' == (*argv)[0])) {
-    usage(self);
+    usage(self, "program argument needed to start a server");
     return EXIT_FAILURE;
   }
 
@@ -189,12 +201,11 @@ int main(int argc, char const** argv) {
     make_id(argv, id_buf+id_off, 1024-id_off);
   } else make_id(argv, id_buf+id_off, 1024-id_off);
   id = id_buf;
-  puts(id);
 
   if (is_kill) {
-    // NULL indicates client to exit right after sending
-    char const* term_cmd[2] = {ESC CUSTOM_TERM_TERM, NULL};
-    if (-1 == client(id, key, term_cmd, 1, true)) {
+    // empty element indicates client to exit right after sending
+    char const* term_cmd[2] = {ESC CUSTOM_TERM_TERM, ""};
+    if (-1 == client(id, key, term_cmd, 2, true)) {
       puts("Could not join server");
       return EXIT_FAILURE;
     }
