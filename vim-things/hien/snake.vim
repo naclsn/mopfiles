@@ -22,15 +22,30 @@ def Init(): dict<any>
     d_curr = 'l'
     d_pend = ''
     [ax, ay] = [rand() % (W - 4) + 2, rand() % (H - 4) + 2]
-    return { width: W, height: H, fps: 12, keys: split("q r h j k l \<left> \<down> \<up> \<right>") }
+    return {
+        width: W, height: H, fps: 12,
+        keys: split("q r h j k l \<left> \<down> \<up> \<right>"),
+        sprites: {
+            '!': 'ErrorMsg',
+            '_': 'Folded',
+            '@': 'WarningMsg',
+            'O': 'MoreMsg',
+            '<': 'Directory',
+            'V': 'Directory',
+            'A': 'Directory',
+            '>': 'Directory',
+        },
+    }
 enddef
 
 def Btnp(id: number, key: string): bool
     if 'q' == key
         return true
-    elseif dead && 'r' == d_pend
-        hien.Erase(id, W / 2 - 4, H / 2 - 2, 16)
-        hien.Erase(id, W / 2 - 3, H / 2, 12)
+    elseif 'r' == key
+        if dead
+            hien.Erase(id, W / 2 - 4, H / 2 - 2, 16)
+            hien.Erase(id, W / 2 - 3, H / 2, 12)
+        endif
         Init()
         return false
     endif
@@ -42,10 +57,13 @@ enddef
 
 def Loop(id: number): bool
     if first
-        hien.Setr(id, 0, 0, W, H, '#')
+        hien.Setr(id, 0, 0, W, H, '_')
         hien.Setr(id, 1, 1, W - 1, H - 1, ' ')
         hien.Set(id, ax, ay, '@')
         first = false
+    endif
+    if dead
+        return false
     endif
 
     const next = len(tail) / 2 - 1 == head ? 0 : head + 1

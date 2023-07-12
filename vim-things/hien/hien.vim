@@ -1,6 +1,29 @@
 vim9script
 
-# :h strdisplaywidth()
+# ```vim9
+# vim9script
+# import './hien.vim'
+#
+# def Init(): dict<any>
+#   return {
+#       width: 64, height: 48,
+#       fps: 0, # call Loop only once
+#       keys: ['q'],
+#       sprites: {'w': 'Search'},
+#   }
+# enddef
+#
+# def Btnp(id: number, key: string): bool
+#   return 'q' == key # quit if 'q'
+# enddef
+#
+# def Loop(id: number): bool
+#   hien.Setr(id, 2, 3, 4, 5, 'w')
+#   return false # do not quit (ie. still call Btnp on key pressed)
+# enddef
+#
+# hien.Register('Test', Init, Btnp, Loop) # adds `:PlayTest`
+# ```
 
 def W(h: string): string
     const n = char2nr(h)
@@ -12,35 +35,24 @@ def H(w: string): string
     return 0x3000 == n ? ' ' : n < 0xfee0 ? w : nr2char(n - 0xfee0)
 enddef
 
-# entries added have a `:Play[.name]`, key is the `.name`
-#   name: string
-#   Init: func(): dict<any>  see Register for its return type
-#   Btnp: func(number, string): bool
-#   Loop: func(number): bool
 var registred = {}
-# meta for a running instance, key is the bufnr (`id` in functions below)
-#   id: number
-#   lnwtext: dict<list<number>>  lines with `Print`ed text,
-#                                key is y values are ..x,w..
-#var running_meta = {}
 
 def Play(name: string)
     const it = registred[name]
     const pp = it.Init()
     const keys: list<string> = get(pp, 'keys', [])
+    const sprites: dict<string> = get(pp, 'sprites', {})
 
     var winid = 0
     var bufid = 0
     var timid = 0
 
-    winid = popup_create(repeat([repeat(W(' '), pp.width)], pp.height), {
+    final opts = {
         minwidth: pp.width,
         minheight: pp.height,
         drag: true,
         dragall: true,
-        #highlight: ..,
         scrollbar: false,
-        #callback: (res) => it.Done,
         filter: (id, key) => {
             if "\<Esc>" == key
                 timer_stop(timid)
@@ -54,10 +66,17 @@ def Play(name: string)
             return true
         },
         mapping: false,
-    })
+    }
+    if has_key(pp, 'background')
+        opts.highlight = pp.background
+    endif
 
+    winid = popup_create(repeat([repeat(W(' '), pp.width)], pp.height), opts)
     bufid = winbufnr(winid)
-    #running_meta[bufid] = { id: bufid, lnwtext: {} }
+
+    for [k, v] in items(sprites)
+        matchadd(v, '\V' .. W(k), 10, -1, { window: winid })
+    endfor
 
     if pp.fps <= 0
         if it.Loop(bufid)
@@ -77,14 +96,20 @@ enddef
 # it should be a dictionary with the following keys:
 #   width: number
 #   height: number
-#   fps: number          if <1, runs Loop once then does not close (except if
-#                        Loop returned `true`)
-#   keys?: list<string>  keys that Btnp can receive (null means every keys)
-#                        non-captured keys will actually do editor stuff!
+#   fps: number             if <1, runs Loop once then does not close (except if
+#                           Loop returned `true`)
+#   keys?: list<string>     keys that Btnp can receive (null means every keys)
+#                           non-captured keys will actually do editor stuff!
+#   sprites?: dict<string>  sprites (single-characters) to associate to a
+#                           highlight group, for example: '#:Search', every
+#                           '#' character will be using the 'Search' group
+#   background?: string     highlight group to apply to the whole window
 export def Register(name: string, Init: func(): dict<any>, Btnp: func(number, string): bool, Loop: func(number): bool)
-    registred[name] = { name: name, Init: Init, Btnp: Btnp, Loop: Loop }
+    registred[name] = { Init: Init, Btnp: Btnp, Loop: Loop }
     exe 'com! Play' .. name .. ' call Play("' .. name .. '")'
 enddef
+
+### API
 
 export def Set(id: number, x: number, y: number, char: string)
     const ln = getbufline(id, y + 1)[0]
@@ -97,6 +122,10 @@ enddef
 
 export def In(v: number, v0: number, v1: number): bool
     return v0 <= v && v < v1
+enddef
+
+export def Clamp(v: number, v0: number, v1: number): number
+    return v < v0 ? v0 : v1 <= v ? v1 - 1 : v
 enddef
 
 export def Setr(id: number, x0: number, y0: number, x1: number, y1: number, char: string)

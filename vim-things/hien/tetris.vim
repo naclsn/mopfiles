@@ -1,7 +1,7 @@
 vim9script
 import './hien.vim'
 
-const pieces_raw = '  @ ,  @ ,  @ ,  @ ;@  ,@@@,   ;  @,@@@,   ;@@,@@; @@,@@ ,   ; @ ,@@@,   ;@@ , @@,   '
+const pieces_raw = '  I ,  I ,  I ,  I ;J  ,JJJ,   ;  L,LLL,   ;OO,OO; SS,SS ,   ; T ,TTT,   ;ZZ , ZZ,   '
 const pieces = map(split(pieces_raw, ';'), (_, w) => map(split(w, ','), (_, v) => split(v, '\zs')))
 
 var first: bool
@@ -12,6 +12,7 @@ var next_rand: number
 var x: number
 var y: number
 var score: number
+var place_delay: number
 
 def TryPickPlace(id: number)
     const save = next_rand
@@ -142,13 +143,26 @@ def Init(): dict<any>
     pend = ''
     next_rand = rand() % len(pieces)
     score = 0
-    return { width: 18, height: 21, fps: 6, keys: split("q r h j k l a e") }
+    return {
+        width: 18, height: 21, fps: 6,
+        keys: split("q r h j k l a e"),
+        sprites: {
+            '_': 'Folded',
+            'I': 'DiffText',
+            'O': 'ModeMsg',
+            'T': 'DiffDelete',
+            'S': 'DiffAdd',
+            'J': 'DiffChange',
+            'Z': 'ErrorMsg',
+            'L': 'Search',
+        },
+    }
 enddef
 
 def Btnp(id: number, key: string): bool
     if 'q' == key
         return true
-    elseif dead && 'r' == pend
+    elseif 'r' == key
         score = -1
         RedrawScore(id)
         Init()
@@ -172,8 +186,6 @@ def Btnp(id: number, key: string): bool
             DoMoveCur(id, 0, 1)
             ++score
         endwhile
-        DoMoveCur(id, 0, -1)
-        --score
         RedrawScore(id)
 
     elseif 'h' == pend
@@ -200,18 +212,33 @@ enddef
 
 def Loop(id: number): bool
     if first
-        hien.Setr(id, 0, 0, 12, 21, '#')
+        hien.Setr(id, 0, 0, 12, 21, '_')
         hien.Setr(id, 1, 0, 11, 20, ' ')
         TryPickPlace(id)
         RedrawScore(id)
         first = false
     endif
+    if dead
+        return false
+    endif
 
-    if CanMoveCur(id, 0, 1)
-        DoMoveCur(id, 0, 1)
+    if 0 != place_delay
+        --place_delay
+        if 0 == place_delay
+            if CanMoveCur(id, 0, 1)
+                DoMoveCur(id, 0, 1)
+            else
+                ClearLinesCur(id)
+                TryPickPlace(id)
+            endif
+        endif
+
     else
-        ClearLinesCur(id)
-        TryPickPlace(id)
+        if CanMoveCur(id, 0, 1)
+            DoMoveCur(id, 0, 1)
+        else
+            place_delay = 3
+        endif
     endif
 
     return false
