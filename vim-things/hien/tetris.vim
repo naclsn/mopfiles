@@ -147,14 +147,14 @@ def Init(): dict<any>
         width: 18, height: 21, fps: 6,
         keys: split("q r h j k l a e"),
         sprites: {
-            '_': 'Folded',
-            'I': 'DiffText',
-            'O': 'ModeMsg',
-            'T': 'DiffDelete',
-            'S': 'DiffAdd',
-            'J': 'DiffChange',
-            'Z': 'ErrorMsg',
-            'L': 'Search',
+            '_': '[Black;Black',
+            'I': '[Cyan;Cyan',
+            'J': '[Blue;Blue',
+            'L': '[LightRed;LightRed',
+            'O': '[Yellow;Yellow',
+            'S': '[Green;Green',
+            'T': '[DarkMagenta;DarkMagenta',
+            'Z': '[Red;Red',
         },
     }
 enddef

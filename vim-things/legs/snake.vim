@@ -8,7 +8,7 @@ endf
 
 fu s:start()
     ene
-    setl bt=nofile nobl noswf
+    setl bh=wipe bt=nofile nobl nocuc nocul noswf
 
     let b:empty = s:fwch(' ')
     let b:walls = map(['|', '+', '-', '+', '|', '+', '-', '+'], 's:fwch(v:val)')

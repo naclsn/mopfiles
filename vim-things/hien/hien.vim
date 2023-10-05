@@ -41,6 +41,7 @@ def Play(name: string)
     const it = registred[name]
     const pp = it.Init()
     const keys: list<string> = get(pp, 'keys', [])
+    const keylock: bool = get(pp, 'keylock', false)
     const sprites: dict<string> = get(pp, 'sprites', {})
 
     var winid = 0
@@ -57,7 +58,7 @@ def Play(name: string)
             if "\<Esc>" == key
                 timer_stop(timid)
                 popup_close(id)
-            elseif -1 == index(keys, key)
+            elseif !keylock && -1 == index(keys, key)
                 return false
             elseif it.Btnp(bufid, key)
                 timer_stop(timid)
@@ -74,8 +75,17 @@ def Play(name: string)
     winid = popup_create(repeat([repeat(W(' '), pp.width)], pp.height), opts)
     bufid = winbufnr(winid)
 
+    var lastHienHi = 0
     for [k, v] in items(sprites)
-        matchadd(v, '\V' .. W(k), 10, -1, { window: winid })
+        var w = v
+        if '[' == v[0]
+            const [fg, bg] = matchlist(v, '\v[(\w+);(\w+)')[1 : 2]
+            w = 'hien' .. lastHienHi
+            exe 'hi' w join([' ctermfg=', fg, ' guibg=', bg, ' guifg=', fg, ' guibg=', bg], '')
+            ++lastHienHi
+        endif
+
+        matchadd(w, '\V' .. W(k), 10, -1, { window: winid })
     endfor
 
     if pp.fps <= 0
@@ -96,13 +106,19 @@ enddef
 # it should be a dictionary with the following keys:
 #   width: number
 #   height: number
-#   fps: number             if <1, runs Loop once then does not close (except if
-#                           Loop returned `true`)
-#   keys?: list<string>     keys that Btnp can receive (null means every keys)
-#                           non-captured keys will actually do editor stuff!
-#   sprites?: dict<string>  sprites (single-characters) to associate to a
-#                           highlight group, for example: '#:Search', every
-#                           '#' character will be using the 'Search' group
+#   fps: number               if <1, runs Loop once then does not close
+#                           (except if Loop returned `true`)
+#   keys?: list<string>       keys that Btnp can receive (null means every
+#                           keys) non-captured keys will actually do editor
+#                           stuff! or use `keylock`
+#   keylock?: bool            with it, no key will pass through to the editor
+#                           (this is not the default behavior!)
+#   sprites?: dict<string>    sprites (single-characters) to associate to a
+#                           highlight group, for example: `'#': 'Search'`, every
+#                           '#' character will be using the 'Search' group;
+#                           if the string starts with a '[' then it must be of
+#                           the form `[fg;bg` where bg and fg should be names
+#                           taken from |cterm-colors|, ex.: `'#': '[Red;Blue'`
 #   background?: string     highlight group to apply to the whole window
 export def Register(name: string, Init: func(): dict<any>, Btnp: func(number, string): bool, Loop: func(number): bool)
     registred[name] = { Init: Init, Btnp: Btnp, Loop: Loop }
