@@ -88,11 +88,9 @@ def Play(name: string)
         matchadd(w, '\V' .. W(k), 10, -1, { window: winid })
     endfor
 
-    if pp.fps <= 0
-        if it.Loop(bufid)
-            popup_close(winid)
-        endif
-    else
+    if it.Loop(bufid)
+        popup_close(winid)
+    elseif 0 < pp.fps
         timid = timer_start(1000 / pp.fps, (id) => {
             if it.Loop(bufid)
                 timer_stop(id)
