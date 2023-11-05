@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <title>Polyglot Editor</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.1/codemirror.min.css" integrity="sha512-uf06llspW44/LZpHzHT6qBOIVODjWtv4MxCricRxkzvopAlSWnTf6hpZTFxuuZcuNE9CBQhqE0Seu1CoRk84nQ==" crossorigin="anonymous" referrerpolicy="no-referrer" />
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.1/codemirror.min.js" integrity="sha512-UczTlJPfdNqI2hb02wot6lMzwUNtjywtRSz+Ut/Q+aR0/D6tLkIxRB+GgjxjX6PSA+0KrQJuwn4z6J+3EExilg==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.1/mode/meta.min.js" integrity="sha512-/2x+sfL5ERHfoViXm/UncFBzaD54f2bkjEui6w2IheEUafG2gcHJv3gQ4VDIqNr+LuApQwpnsjjrEMXI43nPzg==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.1/addon/mode/loadmode.min.js" integrity="sha512-oGyW28fDClI1MCVFG1N1hC3OCoYAzOUGkK5XJ1PxibLkCVXcUlqj9Fbrdy8hoVJ2xDKF3SBhOgWkgzxICt9s6A==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.2/addon/mode/simple.min.js" integrity="sha512-9YoNYsegWvbA5aiSshQ2BNW2FAq3CQVLqpg2r6urw9Tfl1GklM9PNgrMRVz8fhEtjM+uZfO/1X3RURkMcil8wg==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+    <link rel="stylesheet" href="style/main.css" />
+    <script src="lib/pan.js"></script>
+    <script src="lib/bed.js"></script>
+  </head>
+  <body>
+    <div id="app" class="darkish">
+      <div id="menu">
+        <div class="spacer"></div>
+        Editor Theme:&nbsp;<select id="select-theme"></select>
+        <div class="spacer"></div>
+        <button onclick="balanceViews(true)">Balance Views</button>
+        <button onclick="resetViews(true)">Reset Views</button>
+        <div class="spacer push"></div>
+        <div class="repo"><a href="http://perdu.com" target="_blank" rel="noreferrer noopener">TODO</a></div>
+        <div class="spacer"></div>
+      </div>
+      <div id="root"></div>
+    </div>
+    <script src="lib/index.js"></script>
+  </body>
+</html>

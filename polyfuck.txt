@@ -1,0 +1,19 @@
+a = 0//1 --[[-0] ][0][0]*len("""[[[
+;//\
+`
+#define run(script) int main(void) { puts("c run: " script); return 0; }
+#if 0
+`
+function run(script) {
+    console.log('js run: ' + script);
+}
+`]]
+function run(script)
+    print('lua run: ' .. script)
+end
+--[[" """)
+def run(script):
+    print('python run: ' + script)
+#endif //`//] ]]
+
+run("+[-->-[>>+>-----<<]<--<---]>-.>>>+.>>..+++[.>]<<<<.+++.------.<<-.>>>>+.")

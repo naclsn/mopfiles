@@ -1,0 +1,67 @@
+html, body {
+  background-color: #404;
+  font-family: sans-serif;
+  margin: 0;
+  height: 100%;
+}
+#menu {
+  height: 30px;
+  display: flex;
+  align-items: center;
+}
+#root {
+  height: calc(100% - 30px);
+}
+#app, .CodeMirror {
+  height: 100%;
+  /* overflow: hidden; */
+}
+.spacer {
+  width: 2rem;
+}
+.push {
+  margin-left: auto;
+}
+button, select {
+  min-height: 22px;
+}
+/* dark-ish editor themes */
+.darkish #menu {
+  background-color: #1e1e1e;
+  color: #e1e1e1;
+}
+.darkish button,
+.darkish select {
+  background-color: #444;
+  border: 1px solid #555;
+  color: #e1e1e1;
+}
+.darkish button:hover {
+  background-color: #555;
+}
+.darkish .pan-separator,
+.darkish .pan-first,
+.darkish .pan-second,
+.darkish .bed-menu {
+  background-color: #252526;
+}
+/* bright-ish editor themes */
+.brightish #menu {
+  background-color: #f7f7f7;
+  color: #252526;
+}
+.brightish button,
+.brightish select {
+  background-color: #eee;
+  border: 1px solid #ddd;
+  color: #252526;
+}
+.brightish button:hover {
+  background-color: #ddd;
+}
+.brightish .pan-separator,
+.brightish .pan-first,
+.brightish .pan-second,
+.brightish .bed-menu {
+  background-color: #e2e2e7;
+}

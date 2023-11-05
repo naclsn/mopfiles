@@ -1,0 +1,3 @@
+cpp: `#define catch catch(...){}try{}catch`
+py: `input = getattr(__builtins__, 'raw_input', input)`
+js: `void function some(undefined) { return 42; }`
