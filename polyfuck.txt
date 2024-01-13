@@ -1,6 +1,7 @@
-a = 0//1 --[[-0] ][0][0]*len("""[[[
-;//\
+a=0//1--[[-0] ][0][0]*len("""[[[a#{
+;//;93.chr*3})/.to_s.length;<<-a\
 `
+#include <stdio.h>
 #define run(script) int main(void) { puts("c run: " script); return 0; }
 #if 0
 `
@@ -11,9 +12,14 @@ function run(script) {
 function run(script)
     print('lua run: ' .. script)
 end
---[[" """)
+--[[#{
+def run script;
+    puts 'ruby run: ' + script
+end
+}" """)
 def run(script):
     print('python run: ' + script)
+a
 #endif //`//] ]]
 
 run("+[-->-[>>+>-----<<]<--<---]>-.>>>+.>>..+++[.>]<<<<.+++.------.<<-.>>>>+.")
