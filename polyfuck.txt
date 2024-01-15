@@ -1,15 +1,15 @@
-dnl=0//1--[[ -0] ][0][0]*len("""#{def divert _;end#})/^0{#[\
-divert(-1);//}")/.to_s.length;<<-a\
+dnl=0//({-1--[[ -0] ][0][0]}.add(""")#{def divert _;end#})/^0{#[\
+divert(-1);//}")/.to_s.length;<<-dnl\
 `"{}; function run(script) { print "awk run: " script }
 ;
 #include <stdio.h>
 #define run(script) int main(void) { puts("c run: " script); return 0; }
 #if 0
-#[[`;function divert(){} function run(script) { console.log('js run: ' + script); } `]]a=
-# {} function run(script) print('lua run: ' .. script) end --[[
+#[[`;function divert(){} function run(script) { console.log('js run: ' + script); } `]],
+# {}})[1] function run(script) print('lua run: ' .. script) end --[[
 #{ def run script; puts 'ruby run: ' + script end }
-#" """);import sys;run = lambda script: sys.stdout.write('python run: ' + script + '\n')
-a
+#" """)or 1);import sys;run = lambda script: sys.stdout.write('python run: ' + script + '\n')
+dnl
 #endif //`//] ]]
 
 run("+[-->-[>>+>-----<<]<--<---]>-.>>>+.>>..+++[.>]<<<<.+++.------.<<-.>>>>+.")
