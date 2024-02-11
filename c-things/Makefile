@@ -1,15 +1,10 @@
-#if 0
-me:; $(CC) -x c Makefile -o me
+warnings = -Wall -Wextra -Wpedantic -Werror -Wno-unused-function -Wno-unused-variable -Wno-unused-value
+CFLAGS += -ggdb -std=c99 $(warnings)
 
-define src
-#endif
+ifeq ($(OS), Windows_NT)
+frame-LDFLAGS = -pthread -lopengl32 -lgdi32
+else
+frame-LDFLAGS = -pthread -lGL -lX11
+endif
 
-#include <stdio.h>
-
-int main(void) {
-    puts("hi :3");
-    return 0;
-}
-
-#define endef
-endef
+trem: trem.c; $(CC) $< -o $@ $(CFLAGS) $(frame-LDFLAGS)
