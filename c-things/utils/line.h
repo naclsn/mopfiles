@@ -15,12 +15,7 @@
 ///
 /// Make sure to only use LINE_IMPLEMENTATION once.
 ///
-/// Maybe-interesting-note: as it only use `getchar` and `putchar` these can be
-/// (re-)`#defined` to another target; in that case you will also need to have
-/// ```c
-/// #define tcgetattr(...) 0
-/// #define tcsetattr(...) 0
-/// ```
+/// Define line_getchar and line_putchar to retarget.
 
 /* TODO: see if needed
     #if _WIN32
@@ -37,37 +32,43 @@
     #endif
 */
 
-#if !defined(getchar) || !defined(putchar)
+#if !defined(line_getchar) || !defined(line_putchar)
 #include <stdlib.h>
+#define line_getchar getchar
+#define line_putchar putchar
 #endif
 
+struct termios;
+
 char* line_read(void);
+// terminal is already in raw mode (term_good and term_raw are used when handling ^Z)
+char* line_read_raw(struct termios* term_good, struct termios* term_raw);
 // this is a direct access to the history (careful with editing it)
-char** line_histget(size_t* count);
+char** line_histget(unsigned* count);
 // the lines are copied using the default allocator
-void line_histset(char** lines, size_t count);
+void line_histset(char** lines, unsigned count);
 // always call this after at least one `line_read`
 void line_free(void);
 // `words` should return a NULL-terminated list of completions insertable as-is
 // `clean` can be NULL, otherwise it is called with the result afterward
-void line_compgen(char** (*words)(char* line, size_t point), void (*clean)(char** words));
+void line_compgen(char** (*words)(char* line, unsigned point), void (*clean)(char** words));
 
 #ifdef LINE_IMPLEMENTATION
-#include <stdbool.h>
+#include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
 #include <termios.h>
 #include <unistd.h>
 #include <signal.h>
 
-static char** (*_compgen_words)(char* line, size_t point) = NULL;
+static char** (*_compgen_words)(char* line, unsigned point) = NULL;
 static void (*_compgen_clean)(char** words) = NULL;
 
 #ifndef _hist_ln
 #define _hist_ln (128)
 #endif
 static char* _hist_ls[_hist_ln] = {0};
-static size_t _hist_at = 0;
+static unsigned _hist_at = 0;
 
 #undef CTRL
 #define CTRL(x) (x&31)
@@ -90,7 +91,7 @@ static size_t _hist_at = 0;
                 __does;              \
             } else break;            \
         }                            \
-    } while (false)
+    } while (0)
 
 #define WORD_FWD(__does) do {      \
         while (s[i]) {             \
@@ -105,30 +106,30 @@ static size_t _hist_at = 0;
                 i++;               \
             } else break;          \
         }                          \
-    } while (false)
+    } while (0)
 
 char* line_read(void) {
     char* s;
-    size_t i = 0;
+    unsigned i = 0;
 
-    struct termios term;
-    if (tcgetattr(STDIN_FILENO, &term)) {
-        static size_t const n = 64-12;
+    struct termios term_good;
+    if (tcgetattr(STDIN_FILENO, &term_good)) {
+        static unsigned const n = 64-12;
         s = calloc(n, 1);
         if (!s) return NULL;
         s[n-1] = ESC;
 
-        char c = getchar();
+        char c = line_getchar();
         if (EOF == c) return NULL;
 
-        while (true) {
+        while (1) {
             if (EOF == c || '\n' == c) {
                 s['\r' == s[i-1] ? i-1 : i] = '\0';
                 break;
             }
 
             if (ESC == s[i]) {
-                size_t n = (i+1)*2+12;
+                unsigned n = (i+1)*2+12;
                 char* w = realloc(s, n);
                 if (!w) break;
                 s = w;
@@ -137,136 +138,144 @@ char* line_read(void) {
             }
 
             s[i++] = c;
-            c = getchar();
-        } // while true - breaks on eof/eol and alloc fails
+            c = line_getchar();
+        } // while 1 - breaks on eof/eol and alloc fails
 
         return free(_hist_ls[0]), _hist_ls[0] = s;
     } // if not tty
 
-    struct termios term_raw = term;
+    struct termios term_raw = term_good;
     term_raw.c_iflag&=~(IGNBRK | BRKINT | PARMRK | ISTRIP | INLCR | IGNCR | ICRNL | IXON);
     term_raw.c_oflag&=~(OPOST);
     term_raw.c_lflag&=~(ECHO | ECHONL | ICANON | ISIG | IEXTEN);
     term_raw.c_cflag&=~(CSIZE | PARENB);
     term_raw.c_cflag|= (CS8);
     tcsetattr(STDIN_FILENO, TCSANOW, &term_raw);
+    s = line_read_raw(&term_good, &term_raw);
+    tcsetattr(STDIN_FILENO, TCSANOW, &term_good);
+    return s;
+}
 
-    if (_hist_at) for (s = _hist_ls[_hist_at]; s[i]; i++) putchar(s[i]);
+char* line_read_raw(struct termios* term_good, struct termios* term_raw) {
+    char* s;
+    unsigned i = 0;
+
+    if (_hist_at) for (s = _hist_ls[_hist_at]; s[i]; i++) line_putchar(s[i]);
     else if (!_hist_ls[0] || _hist_ls[0][0]) {
         memmove(_hist_ls+1, _hist_ls, (_hist_ln-1)*sizeof(char*));
-        static size_t const n = 64-12;
+        static unsigned const n = 64-12;
         _hist_ls[0] = s = calloc(n, 1);
-        if (!s) goto done;
+        if (!s) return NULL;
         s[n-1] = ESC;
     } else s = _hist_ls[0];
 
-    bool reprocess = false;
+    int reprocess = 0;
     char c;
-    while (true) {
-        if (!reprocess) c = getchar();
-        else reprocess = false;
+    while (1) {
+        if (!reprocess) c = line_getchar();
+        else reprocess = 0;
         switch (c) {
             case ESC:
-                switch (c = getchar()) {
+                switch (c = line_getchar()) {
                     case 'b':
-                        WORD_BKW(putchar('\b'));
+                        WORD_BKW(line_putchar('\b'));
                         break;
 
                     case 'c':
                         if (s[i]) {
-                            bool done = false;
-                            WORD_FWD(putchar(IS_LETTER(s[i])
-                                ? s[i] = (!done ? done = true, s[i]&~32 : s[i]|32)
+                            int done = 0;
+                            WORD_FWD(line_putchar(IS_LETTER(s[i])
+                                ? s[i] = (!done ? done = 1, s[i]&~32 : s[i]|32)
                                 : s[i]));
                         }
                         break;
 
                     case 'd':
                         if (s[i]) {
-                            size_t j = i, k;
+                            unsigned j = i, k;
                             WORD_FWD();
-                            for (k = j; s[i]; k++, i++) putchar(s[k] = s[i]);
+                            for (k = j; s[i]; k++, i++) line_putchar(s[k] = s[i]);
                             s[k] = '\0';
-                            for (; k != i; k++) putchar(' ');
-                            for (; i != j; i--) putchar('\b');
+                            for (; k != i; k++) line_putchar(' ');
+                            for (; i != j; i--) line_putchar('\b');
                         }
                         break;
 
                     case 'f':
-                        WORD_FWD(putchar(s[i]));
+                        WORD_FWD(line_putchar(s[i]));
                         break;
 
                     case CTRL('H'):
                     case DEL:
                         if (i) {
-                            size_t j = i, k;
-                            WORD_BKW(putchar('\b'));
-                            for (k = i; s[j]; k++, j++) putchar(s[k] = s[j]);
+                            unsigned j = i, k;
+                            WORD_BKW(line_putchar('\b'));
+                            for (k = i; s[j]; k++, j++) line_putchar(s[k] = s[j]);
                             s[k] = '\0';
-                            for (; k != j; k++) putchar(' ');
-                            for (; k != i; k--) putchar('\b');
+                            for (; k != j; k++) line_putchar(' ');
+                            for (; k != i; k--) line_putchar('\b');
                         }
                         break;
 
                     case 'l':
-                        WORD_FWD(putchar(IS_LETTER(s[i]) ? s[i]|= 32 : s[i]));
+                        WORD_FWD(line_putchar(IS_LETTER(s[i]) ? s[i]|= 32 : s[i]));
                         break;
 
                     case 't':
                         if (i) {
-                            size_t j = i, bst, ben, fst, fen;
-                            bool found = false;
-                            WORD_BKW(if (!found && IS_LETTER(s[i])) { found = true; ben = i+1; });
+                            unsigned j = i, bst, ben, fst, fen;
+                            int found = 0;
+                            WORD_BKW(if (!found && IS_LETTER(s[i])) { found = 1; ben = i+1; });
                             bst = i;
                             i = j;
                             if (!found) break;
-                            found = false;
-                            WORD_FWD(if (!found && IS_LETTER(s[i])) { found = true; fst = i; });
+                            found = 0;
+                            WORD_FWD(if (!found && IS_LETTER(s[i])) { found = 1; fst = i; });
                             fen = i;
                             if (!found) {
                                 fst = bst;
                                 fen = ben;
                                 i = bst;
-                                found = false;
-                                WORD_BKW(if (!found && IS_LETTER(s[i])) { found = true; ben = i+1; });
+                                found = 0;
+                                WORD_BKW(if (!found && IS_LETTER(s[i])) { found = 1; ben = i+1; });
                                 bst = i;
                                 i = j;
                                 if (!found) break;
                             }
                             i = j;
-                            size_t len = strlen(s);
+                            unsigned len = strlen(s);
                             char* cpy = malloc(len);
                             if (!cpy) break;
                             memcpy(cpy, s, len);
-                            for (; i != bst; i--) putchar('\b');
-                            for (size_t k = fst; k != fen; k++, i++) putchar(s[i] = cpy[k]);
-                            for (size_t k = ben; k != fst; k++, i++) putchar(s[i] = cpy[k]);
-                            for (size_t k = bst; k != ben; k++, i++) putchar(s[i] = cpy[k]);
+                            for (; i != bst; i--) line_putchar('\b');
+                            for (unsigned k = fst; k != fen; k++, i++) line_putchar(s[i] = cpy[k]);
+                            for (unsigned k = ben; k != fst; k++, i++) line_putchar(s[i] = cpy[k]);
+                            for (unsigned k = bst; k != ben; k++, i++) line_putchar(s[i] = cpy[k]);
                             free(cpy);
                         }
                         break;
 
                     case 'u':
-                        WORD_FWD(putchar(IS_LETTER(s[i]) ? s[i]&=~32 : s[i]));
+                        WORD_FWD(line_putchar(IS_LETTER(s[i]) ? s[i]&=~32 : s[i]));
                         break;
                 }
                 break; // case ESC
 
             case CTRL(']'):
-                for (c = getchar(); s[i] && c != s[i]; i++) putchar(s[i]);
+                for (c = line_getchar(); s[i] && c != s[i]; i++) line_putchar(s[i]);
                 break;
 
             case CTRL('A'):
-                for (; i; i--) putchar('\b');
+                for (; i; i--) line_putchar('\b');
                 break;
 
             case CTRL('B'):
-                if (i) i--, putchar('\b');
+                if (i) i--, line_putchar('\b');
                 break;
 
             case CTRL('C'):
-                putchar('^');
-                putchar('C');
+                line_putchar('^');
+                line_putchar('C');
                 s[0] = '\0';
                 // fall through
             case CTRL('M'):
@@ -276,43 +285,42 @@ char* line_read(void) {
                 // fall through
             case CTRL('O'):
                 if (_hist_at) _hist_at--;
-                putchar('\r');
-                putchar('\n');
-                goto done;
+                line_putchar('\r');
+                line_putchar('\n');
+                return s;
 
             case CTRL('D'):
                 if ('\0' != *s) {
                     if (s[i]) {
-                        size_t j = i++, k;
-                        for (k = j; s[i]; k++, i++) putchar(s[k] = s[i]);
+                        unsigned j = i++, k;
+                        for (k = j; s[i]; k++, i++) line_putchar(s[k] = s[i]);
                         s[k] = '\0';
-                        putchar(' ');
-                        for (; i != j; i--) putchar('\b');
+                        line_putchar(' ');
+                        for (; i != j; i--) line_putchar('\b');
                     }
                     break;
                 }
                 // fall through
             case EOF:
-                s = NULL;
-                goto done;
+                return NULL;
 
             case CTRL('E'):
-                for (; s[i]; i++) putchar(s[i]);
+                for (; s[i]; i++) line_putchar(s[i]);
                 break;
 
             case CTRL('F'):
-                if (s[i]) putchar(s[i++]);
+                if (s[i]) line_putchar(s[i++]);
                 break;
 
             case CTRL('H'):
             case DEL:
                 if (i) {
-                    size_t j = i-1, k;
-                    putchar('\b');
-                    for (k = j; s[i]; k++, i++) putchar(s[k] = s[i]);
+                    unsigned j = i-1, k;
+                    line_putchar('\b');
+                    for (k = j; s[i]; k++, i++) line_putchar(s[k] = s[i]);
                     s[k] = '\0';
-                    putchar(' ');
-                    for (; i != j; i--) putchar('\b');
+                    line_putchar(' ');
+                    for (; i != j; i--) line_putchar('\b');
                 }
                 break;
 
@@ -320,13 +328,13 @@ char* line_read(void) {
                 if (_compgen_words) {
                     char** words = _compgen_words(s, i);
                     while (words && words[0]) {
-                        size_t k, j = 0;
+                        unsigned k, j = 0;
                         for (k = 0; words[k]; k++) {
-                            size_t l = strlen(words[k]);
+                            unsigned l = strlen(words[k]);
                             if (j < l) j = l;
                         }
                         for (k = i; ESC != s[k]; k++);
-                        size_t n = (k+1)+12;
+                        unsigned n = (k+1)+12;
                         while (n < k+j) n*= 2;
                         n-= 12;
                         char* cpy = malloc(n);
@@ -337,23 +345,23 @@ char* line_read(void) {
                         s = cpy;
                         cpy = _hist_ls[_hist_at];
                         _hist_ls[_hist_at] = s;
-                        reprocess = true;
+                        reprocess = 1;
                         k = 0;
                         j = i;
-                        while (true) {
-                            for (; j != i; i--) putchar('\b');
-                            for (; words[k][i-j]; i++) putchar(s[i] = words[k][i-j]);
-                            size_t l = 0;
-                            bool z = false;
+                        while (1) {
+                            for (; j != i; i--) line_putchar('\b');
+                            for (; words[k][i-j]; i++) line_putchar(s[i] = words[k][i-j]);
+                            unsigned l = 0;
+                            int z = 0;
                             for (; cpy[j+l]; l++) {
                                 z = z || !s[i+l];
-                                putchar(s[i+l] = cpy[j+l]);
+                                line_putchar(s[i+l] = cpy[j+l]);
                             }
-                            size_t il = i+l;
-                            if (!z) for (; s[i+l]; l++) putchar(' ');
+                            unsigned il = i+l;
+                            if (!z) for (; s[i+l]; l++) line_putchar(' ');
                             s[il] = '\0';
-                            for (; l; l--) putchar('\b');
-                            if (CTRL('I') != (c = getchar())) break;
+                            for (; l; l--) line_putchar('\b');
+                            if (CTRL('I') != (c = line_getchar())) break;
                             if (!words[++k]) k = 0;
                         }
                         free(cpy);
@@ -365,23 +373,23 @@ char* line_read(void) {
 
             case CTRL('K'):
                 if (s[i]) {
-                    size_t j = i;
-                    for (; s[j]; j++) putchar(' ');
-                    for (; j != i; j--) putchar('\b');
+                    unsigned j = i;
+                    for (; s[j]; j++) line_putchar(' ');
+                    for (; j != i; j--) line_putchar('\b');
                     s[i] = '\0';
                 }
                 break;
 
             case CTRL('N'):
                 if (_hist_at) {
-                    size_t p_l = strlen(s), n_l, k;
-                    for (k = i; k; k--) putchar('\b');
+                    unsigned p_l = strlen(s), n_l, k;
+                    for (k = i; k; k--) line_putchar('\b');
                     s = _hist_ls[--_hist_at];
-                    for (k = 0; s[k]; k++) putchar(s[k]);
+                    for (k = 0; s[k]; k++) line_putchar(s[k]);
                     n_l = k;
                     if (n_l < p_l) {
-                        for (; k < p_l; k++) putchar(' ');
-                        for (; n_l < k; k--) putchar('\b');
+                        for (; k < p_l; k++) line_putchar(' ');
+                        for (; n_l < k; k--) line_putchar('\b');
                     }
                     i = n_l;
                 }
@@ -389,14 +397,14 @@ char* line_read(void) {
 
             case CTRL('P'):
                 if (_hist_at+1 < _hist_ln && _hist_ls[_hist_at+1]) {
-                    size_t p_l = strlen(s), n_l, k;
-                    for (k = i; k; k--) putchar('\b');
+                    unsigned p_l = strlen(s), n_l, k;
+                    for (k = i; k; k--) line_putchar('\b');
                     s = _hist_ls[++_hist_at];
-                    for (k = 0; s[k]; k++) putchar(s[k]);
+                    for (k = 0; s[k]; k++) line_putchar(s[k]);
                     n_l = k;
                     if (n_l < p_l) {
-                        for (; k < p_l; k++) putchar(' ');
-                        for (; n_l < k; k--) putchar('\b');
+                        for (; k < p_l; k++) line_putchar(' ');
+                        for (; n_l < k; k--) line_putchar('\b');
                     }
                     i = n_l;
                 }
@@ -406,30 +414,30 @@ char* line_read(void) {
             case CTRL('S'):
                 {
                     char sr_s[32];
-                    size_t sr_i = 0;
-                    bool rev = c == CTRL('R');
+                    unsigned sr_i = 0;
+                    int rev = c == CTRL('R');
                     sr_s[0] = '\0';
                     sr_i = i;
-                    for (; s[sr_i]; sr_i++) putchar(' ');
-                    for (; sr_i; sr_i--) putchar('\b');
-                    putchar('^');
-                    putchar(rev ? 'R' : 'S');
-                    putchar(':');
-                    if (3 < i) for (; sr_i < i-3; sr_i++) putchar(' ');
-                    for (; sr_i; sr_i--) putchar('\b');
+                    for (; s[sr_i]; sr_i++) line_putchar(' ');
+                    for (; sr_i; sr_i--) line_putchar('\b');
+                    line_putchar('^');
+                    line_putchar(rev ? 'R' : 'S');
+                    line_putchar(':');
+                    if (3 < i) for (; sr_i < i-3; sr_i++) line_putchar(' ');
+                    for (; sr_i; sr_i--) line_putchar('\b');
                     sr_s[sr_i = 0] = '\0';
-                    while (true) {
-                        putchar('|');
-                        size_t k = 0;
-                        for (; s[k]; k++) putchar(s[k]);
-                        k++, putchar(' ');
-                        for (; k != i; k--) putchar('\b');
-                        c = getchar();
+                    while (1) {
+                        line_putchar('|');
+                        unsigned k = 0;
+                        for (; s[k]; k++) line_putchar(s[k]);
+                        k++, line_putchar(' ');
+                        for (; k != i; k--) line_putchar('\b');
+                        c = line_getchar();
                         if (' ' <= c && c <= '~' && sr_i <31) {
-                            for (size_t k = i+1; k != 0; k--) putchar('\b');
-                            putchar(sr_s[sr_i++] = c);
+                            for (unsigned k = i+1; k != 0; k--) line_putchar('\b');
+                            line_putchar(sr_s[sr_i++] = c);
                         } else if ((DEL == c || CTRL('H') == c) && sr_i) {
-                            for (size_t k = i+2; k != 0; k--) putchar('\b');
+                            for (unsigned k = i+2; k != 0; k--) line_putchar('\b');
                             --sr_i;
                         } else {
                             reprocess = /*ESC != c &&*/ CTRL('G') != c && (rev ? CTRL('R') : CTRL('S')) != c;
@@ -440,98 +448,96 @@ char* line_read(void) {
                             char* at = strstr(_hist_ls[_hist_at], sr_s);
                             if (!at) rev ? _hist_at++ : _hist_at--;
                             else {
-                                size_t k = 1;
-                                putchar(' ');
-                                for (; s[k]; k++) putchar(' ');
-                                for (; k; k--) putchar('\b');
+                                unsigned k = 1;
+                                line_putchar(' ');
+                                for (; s[k]; k++) line_putchar(' ');
+                                for (; k; k--) line_putchar('\b');
                                 i = at - (s = _hist_ls[_hist_at]);
                                 break;
                             }
                         } // while strstr
-                    } // while true - getchar (also breaks if not handled)
-                    size_t k = i+sr_i+4;
-                    for (; k; k--) putchar('\b');
-                    for (; s[k]; k++) putchar(s[k]);
-                    for (size_t j = 0; j != sr_i+4; j++, k++) putchar(' ');
-                    for (; k != i; k--) putchar('\b');
+                    } // while 1 - line_getchar (also breaks if not handled)
+                    unsigned k = i+sr_i+4;
+                    for (; k; k--) line_putchar('\b');
+                    for (; s[k]; k++) line_putchar(s[k]);
+                    for (unsigned j = 0; j != sr_i+4; j++, k++) line_putchar(' ');
+                    for (; k != i; k--) line_putchar('\b');
                 }
                 break; // case ^R/^S
 
             case CTRL('T'):
                 if (i) {
-                    if (!s[i]) i--, putchar('\b');
-                    putchar('\b');
+                    if (!s[i]) i--, line_putchar('\b');
+                    line_putchar('\b');
                     char p = s[i-1];
-                    putchar(s[i-1] = s[i]);
-                    putchar(s[i++] = p);
+                    line_putchar(s[i-1] = s[i]);
+                    line_putchar(s[i++] = p);
                 }
                 break;
 
             case CTRL('U'):
                 if (i) {
-                    size_t j = i, k;
-                    for (; i; i--) putchar('\b');
-                    for (k = i; s[j]; k++, j++) putchar(s[k] = s[j]);
+                    unsigned j = i, k;
+                    for (; i; i--) line_putchar('\b');
+                    for (k = i; s[j]; k++, j++) line_putchar(s[k] = s[j]);
                     s[k] = '\0';
-                    for (; k != j; k++) putchar(' ');
-                    for (; j != i; j--) putchar('\b');
+                    for (; k != j; k++) line_putchar(' ');
+                    for (; j != i; j--) line_putchar('\b');
                 }
                 break;
 
             case CTRL('W'):
                 if (i) {
-                    size_t j = i, k;
-                    while (0 < i && ' ' != s[i-1]) i--, putchar('\b');
-                    for (k = i; s[j]; k++, j++) putchar(s[k] = s[j]);
+                    unsigned j = i, k;
+                    while (0 < i && ' ' != s[i-1]) i--, line_putchar('\b');
+                    for (k = i; s[j]; k++, j++) line_putchar(s[k] = s[j]);
                     s[k] = '\0';
-                    for (; k != j; k++) putchar(' ');
-                    for (; k != i; k--) putchar('\b');
+                    for (; k != j; k++) line_putchar(' ');
+                    for (; k != i; k--) line_putchar('\b');
                 }
                 break;
 
             case CTRL('Z'):
-                tcsetattr(STDIN_FILENO, TCSANOW, &term);
+                tcsetattr(STDIN_FILENO, TCSANOW, term_good);
                 raise(SIGTSTP);
-                tcsetattr(STDIN_FILENO, TCSANOW, &term_raw);
+                tcsetattr(STDIN_FILENO, TCSANOW, term_raw);
                 break;
 
             default:
                 if (' ' <= c && c <= '~') {
                     char p = s[i];
-                    putchar(s[i++] = c);
-                    size_t k = i;
+                    line_putchar(s[i++] = c);
+                    unsigned k = i;
                     while (p) {
                         char w = s[k];
-                        putchar(s[k++] = p);
+                        line_putchar(s[k++] = p);
                         p = w;
                     }
                     if (ESC == s[k]) {
-                        size_t n = (k+1)*2+12;
-                        if (!(s = realloc(s, n))) goto done;
+                        unsigned n = (k+1)*2+12;
+                        if (!(s = realloc(s, n))) return s;
                         _hist_ls[_hist_at] = s;
                         memset(s+k+1, '\0', n-k-2);
                         s[n-1] = ESC;
                     }
                     s[k] = p;
-                    for (; k != i; k--) putchar('\b');
+                    for (; k != i; k--) line_putchar('\b');
                 }
         } // switch c
-    } // while true
+    } // while 1
 
-done:
-    tcsetattr(STDIN_FILENO, TCSANOW, &term);
     return s;
 }
 
-char** line_histget(size_t* count) {
+char** line_histget(unsigned* count) {
     for (*count = 0; *count < _hist_ln && _hist_ls[*count]; (*count)++);
     return _hist_ls[0] && !_hist_ls[0][0] ? (*count)--, _hist_ls+1 : _hist_ls;
 }
 
-void line_histset(char** lines, size_t count) {
+void line_histset(char** lines, unsigned count) {
     line_free();
-    if (lines && count) for (size_t k = 0; count && k < _hist_ln; count--, k++) {
-        size_t l = strlen(lines[k]), n = 64;
+    if (lines && count) for (unsigned k = 0; count && k < _hist_ln; count--, k++) {
+        unsigned l = strlen(lines[k]), n = 64;
         while (n < l) n*= 2;
         n-= 12;
         if (!(_hist_ls[count-1] = calloc(n, 1))) break;
@@ -541,10 +547,10 @@ void line_histset(char** lines, size_t count) {
 }
 
 void line_free(void) {
-    for (size_t k = _hist_at = 0; k < _hist_ln; k++) _hist_ls[k] = (free(_hist_ls[k]), NULL);
+    for (unsigned k = _hist_at = 0; k < _hist_ln; k++) _hist_ls[k] = (free(_hist_ls[k]), NULL);
 }
 
-void line_compgen(char** (*words)(char* line, size_t point), void (*clean)(char** words)) {
+void line_compgen(char** (*words)(char* line, unsigned point), void (*clean)(char** words)) {
     _compgen_words = words;
     _compgen_clean = clean;
 }
