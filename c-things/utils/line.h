@@ -15,7 +15,7 @@
 ///
 /// Make sure to only use LINE_IMPLEMENTATION once.
 ///
-/// Define line_getchar and line_putchar to retarget.
+/// Define line_fileno, line_getchar and line_putchar to retarget.
 
 /* TODO: see if needed
     #if _WIN32
@@ -31,12 +31,6 @@
     }
     #endif
 */
-
-#if !defined(line_getchar) || !defined(line_putchar)
-#include <stdlib.h>
-#define line_getchar getchar
-#define line_putchar putchar
-#endif
 
 struct termios;
 
@@ -60,6 +54,16 @@ void line_compgen(char** (*words)(char* line, unsigned point), void (*clean)(cha
 #include <termios.h>
 #include <unistd.h>
 #include <signal.h>
+
+#ifndef line_fileno
+#define line_fileno STDIN_FILENO
+#endif
+#ifndef line_getchar
+#define line_getchar getchar
+#endif
+#ifndef line_putchar
+#define line_putchar putchar
+#endif
 
 static char** (*_compgen_words)(char* line, unsigned point) = NULL;
 static void (*_compgen_clean)(char** words) = NULL;
@@ -109,11 +113,11 @@ static unsigned _hist_at = 0;
     } while (0)
 
 char* line_read(void) {
-    char* s;
+    char* s = NULL;
     unsigned i = 0;
 
     struct termios term_good;
-    if (tcgetattr(STDIN_FILENO, &term_good)) {
+    if (tcgetattr(line_fileno, &term_good)) {
         static unsigned const n = 64-12;
         s = calloc(n, 1);
         if (!s) return NULL;
@@ -150,9 +154,7 @@ char* line_read(void) {
     term_raw.c_lflag&=~(ECHO | ECHONL | ICANON | ISIG | IEXTEN);
     term_raw.c_cflag&=~(CSIZE | PARENB);
     term_raw.c_cflag|= (CS8);
-    tcsetattr(STDIN_FILENO, TCSANOW, &term_raw);
-    s = line_read_raw(&term_good, &term_raw);
-    tcsetattr(STDIN_FILENO, TCSANOW, &term_good);
+    tcsetattr(line_fileno, TCSANOW, &term_good);
     return s;
 }
 
@@ -498,9 +500,9 @@ char* line_read_raw(struct termios* term_good, struct termios* term_raw) {
                 break;
 
             case CTRL('Z'):
-                tcsetattr(STDIN_FILENO, TCSANOW, term_good);
+                tcsetattr(line_fileno, TCSANOW, term_good);
                 raise(SIGTSTP);
-                tcsetattr(STDIN_FILENO, TCSANOW, term_raw);
+                tcsetattr(line_fileno, TCSANOW, term_raw);
                 break;
 
             default:
