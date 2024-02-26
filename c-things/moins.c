@@ -232,10 +232,17 @@ void scroll_to(unsigned to) {
 void status(char* msg) {
     unsigned len;
     char tmp[1024] = {0};
-    len = sprintf(tmp, " file: %s  lines %d to %d of %d%s", name, top+1, count < top+row-1 ? count : top+row-1, flags.eof ? count : 0, msg);
+
+    len = sprintf(tmp, " %s  lines %d-%d (of %s%d)", name, top+1, count < top+row-1 ? count : top+row-1, flags.eof ? "" : ">", count);
+    if (msg) len+= sprintf(tmp+len, "  %s", msg);
+
     if (len+1 < col) memset(tmp+len, ' ', col-1-len);
     else tmp[col-1] = '\0';
-    fprintf(term, "\x1b[m\x1b[%dH\x1b[7m%s\x1b[m", row, tmp);
+
+    fprintf(term, msg
+            ? "\x1b[m\x1b[%dH\x1b[36m\x1b[7m%s\x1b[m"
+            : "\x1b[m\x1b[%dH\x1b[7m%s\x1b[m"
+            , row, tmp);
     fflush(term);
 }
 
@@ -246,7 +253,7 @@ void resize(int sig) {
         col = winsz.ws_col;
         if (lines) {
             scroll_to(top);
-            status("");
+            status(NULL);
         }
     }
 }
@@ -292,22 +299,72 @@ void setup(void) {
 
 int main(int argc, char** argv) {
     char const* prog = (argc--, *argv++);
-    char* msg = "", c = 'g';
+    char* msg = NULL, c = CTRL('L');
 
     file = stdin;
     name = "<stdin>";
-    if (argc && !strcmp("-h", argv[0])) return printf("Usage: %s [<file>]\n", prog), EXIT_SUCCESS;
+    if (argc && !strcmp("-h", argv[0])) return printf(
+            "Usage: %s [<file> [+<line>]]\n"
+            "\n"
+            "   ^L             force redraw\n"
+            "    q  Q ^Q       quit\n"
+            "   ^Z             background (job control)\n"
+            "\n"
+            "    j ^N ^E down  next line\n"
+            "    k ^P ^Y up    previous line\n"
+            "    d  D ^D       next half-screen\n"
+            "    u  U ^U       previous half-screen\n"
+            "    f  F ^F       next screen\n"
+            "    b  B ^B       previous screen\n"
+            "    g       home  first line\n"
+            "    G       end   last line\n"
+            "    wheel down    next     3 lines\n"
+            "    wheel up      previous 3 lines\n"
+            "\n"
+            "    m  (M)        put mark at top (respectively bottom)\n"
+            "    '   `         go to mark\n"
+            "    /  (?)        search forward (backward)\n"
+            "    n  (N)        next occurence forward (backward)\n"
+            "\n"
+            "    v             open in $EDITOR (default `vi`)\n"
+            "                   (saves stdin to /tmp/pager-stdin if needed)\n"
+            "    r  e          read from file\n"
+            "    w  s          write to file\n"
+            "    !             run shell command\n"
+            "    :             go to line number\n"
+            "    -             toggle option flag:\n"
+            "                   -S  wrap long lines\n"
+            "                   -R  show control characters\n"
+            "                   -N  show line numbers\n"
+            "                   -J  show marks\n"
+            , prog), EXIT_SUCCESS;
     if (argc && strcmp("-", argv[0])) {
         file = fopen(argv[0], "rb");
         name = strrchr(argv[0], '/');
         if (!name++) name = argv[0];
     }
     if (!file) return perror(argv[0]), EXIT_FAILURE;
+    if (stdin != file && 1 < argc && '+' == argv[1][0]) {
+        long l = atol(argv[1]+1);
+        if (0 < l) top = l-1;
+        else msg = "invalid line number";
+    }
 
     setup();
 
     do switch (c) {
+        case CTRL('L'): scroll_to(top); break;
+
         case 'q': case 'Q': case CTRL('Q'): return EXIT_SUCCESS;
+
+        case CTRL('Z'):
+            leave_alt();
+            tcsetattr(fileno(term), TCSANOW, &term_in);
+            raise(SIGTSTP);
+            tcsetattr(fileno(term), TCSANOW, &term_raw);
+            enter_alt();
+            scroll_to(top);
+            break;
 
         case 'j': case CTRL('N'): case CTRL('E'): scroll_up(1); break;
         case 'k': case CTRL('P'): case CTRL('Y'): scroll_dw(1); break;
@@ -334,16 +391,22 @@ int main(int argc, char** argv) {
         } break;
 
         case 'm':
+            fprintf(term, "\r\x1b[Kset mark top: ");
             get_key(&c); c|= 32;
             if ('a' <= c && c <= 'z') { marks[c-'a'] = top+1; scroll_to(top); }
+            else msg = "invalid mark (should be a-z)";
             break;
         case 'M':
+            fprintf(term, "\r\x1b[Kset mark bot: ");
             get_key(&c); c|= 32;
             if ('a' <= c && c <= 'z') { marks[c-'a'] = top+row-1; scroll_to(top); }
+            else msg = "invalid mark (should be a-z)";
             break;
         case '\'': case '`':
+            fprintf(term, "\r\x1b[Kgo to mark: ");
             get_key(&c); c|= 32;
             if ('a' <= c && c <= 'z' && marks[c-'a']) scroll_to(marks[c-'a']-1);
+            else msg = marks[c-'a'] ? "invalid mark (should be a-z)" : "mark not set";
             break;
 
         case '/': {
@@ -354,10 +417,10 @@ int main(int argc, char** argv) {
                 if (search) {
                     char* at;
                     while (!(at = strstr(lines[top+1], search)) && !flags.eof) fetch_lines(count*2);
-                    if (!at) msg = " -- no occurence forward";
+                    if (!at) msg = "no occurence forward";
                     else {
                         unsigned k;
-                        for (k = top+1; k+1 < count; k++) if (lines[k] <= at && at <= lines[k+1]) {
+                        for (k = top+1; k+1 < count; k++) if (lines[k] <= at && at < lines[k+1]) {
                             top = k;
                             break;
                         }
@@ -372,15 +435,13 @@ int main(int argc, char** argv) {
             if (get_line(&search)) {
                 searchlen = strlen(search);
         case 'N':
-                if (search && count) {
-                    /* FIXME: is broken */
-                    unsigned bot = top+row < count ? top+row : count;
-                    char* at = lines[bot-1];
-                    while (--at-searchlen <= lines[0] && memcmp(at-searchlen, search, searchlen));
-                    if (at-searchlen < lines[0]) msg = " -- no occurence backward";
+                if (search) {
+                    char* at = lines[top]-searchlen;
+                    while (lines[0] <= --at && memcmp(at, search, searchlen));
+                    if (at < lines[0]) msg = "no occurence backward";
                     else {
                         unsigned k;
-                        for (k = bot; k; k--) if (lines[k-1] <= at && at <= lines[k]) {
+                        for (k = top; k; k--) if (lines[k-1] <= at && at < lines[k]) {
                             top = k-1;
                             break;
                         }
@@ -389,20 +450,6 @@ int main(int argc, char** argv) {
                 }
             } /* get line */
         } break;
-
-        case CTRL('L'):
-            scroll_to(top);
-            break;
-
-        case CTRL('Z'):
-            leave_alt();
-            tcsetattr(fileno(term), TCSANOW, &term_in);
-            raise(SIGTSTP);
-            tcsetattr(fileno(term), TCSANOW, &term_raw);
-            get_key(&c);
-            enter_alt();
-            scroll_to(top);
-            break;
 
         case 'v': if(0) {
             /* TODO: todo */
@@ -417,7 +464,7 @@ int main(int argc, char** argv) {
             fprintf(term, "\r\x1b[Kread file: ");
             if (get_line(&line)) {
                 FILE* f = fopen(line, "rb");
-                if (!f) msg = " -- could not open file for reading";
+                if (!f) msg = "could not open file for reading";
                 else {
                     fclose(file);
                     file = f;
@@ -437,7 +484,7 @@ int main(int argc, char** argv) {
             fprintf(term, "\r\x1b[Kwrite file: ");
             if (get_line(&line)) {
                 FILE* f = fopen(line, "wb");
-                if (!f) msg = " -- could not open file for writing";
+                if (!f) msg = "could not open file for writing";
                 else {
                     fetch_lines(-1);
                     fwrite(*lines, 1, length, f);
@@ -464,7 +511,9 @@ int main(int argc, char** argv) {
             fprintf(term, "\r\x1b[Kgoto line: ");
             if (get_line(&line)) {
                 long l = atol(line);
-                if (0 < l) scroll_to(row/2 < l ? l-row/2 : l-1);
+                if (0 < l) scroll_to(l-1);
+                else msg = "invalid line number";
+                if (count < l) msg = "given line number outside file";
             }
         } break;
 
@@ -474,7 +523,7 @@ int main(int argc, char** argv) {
             case 'N': flags.nums++; scroll_to(top); break;
             case 'J': flags.marks++; scroll_to(top); break;
         } break;
-    } while (status(msg), get_key(&c));
+    } while (status(msg), msg = NULL, get_key(&c));
 
     return EXIT_SUCCESS;
 }
