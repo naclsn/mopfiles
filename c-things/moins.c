@@ -1,10 +1,6 @@
-/** TODO:
- *  - line wrap (-S)
- *  - fix backward search
- *  - 'v' (open in editor)
- */
-
+#define _POSIX_SOURCE /* kill, fileno */
 #include <errno.h>
+#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -12,21 +8,23 @@
 #include <termios.h>
 #include <unistd.h>
 
-int myfileno(void);
+FILE* term = NULL;
+struct termios term_good, term_raw;
 int mygetchar(void);
 int myputchar(int c);
-
+void mylinepause(void);
 #define LINE_IMPLEMENTATION
-#define line_fileno myfileno()
+#define line_fileno fileno(term)
 #define line_getchar mygetchar
 #define line_putchar myputchar
+#define line_pause mylinepause
 #include "utils/line.h"
 
-FILE* term = NULL;
 FILE* file = NULL;
-struct termios term_in, term_raw;
 unsigned short row = 24, col = 80;
 char* name = NULL;
+/* temporary file for commands like 'v' */
+#define TMP_PAGER_STDIN "/tmp/pager-stdin"
 
 char** lines = NULL;      /* lines[0] is the whole buffer, and thus start of first line, lines[k] is end of line k (ie first line is lines[0]..lines[1]) */
 char** line_rends = NULL; /* line_rends[k] is since the last SGR reset ("ESC[0m" or "ESC[m") and so line_rends[0] == lines[0] */
@@ -38,9 +36,9 @@ unsigned top = 0;         /* the index of the start of the first visible line */
 struct {
     unsigned alt :1,   /* in alt screen (not toggleable) */
              eof :1,   /* found eof (not toggleable) */
-             wrap :1,  /* NIY: wrap long lines */
-             raw :1,   /* explicit ctrl chars */
-             nums :1,  /* show line number */
+             wrap :1,  /* wrap long lines (not implemented yet) */
+             raw :1,   /* show ctrl chars */
+             nums :1,  /* show line numbers */
              marks :1; /* show marks */
 } flags = {0};
 unsigned marks[26] = {0}; /* a-z (A-Z fold back to it) */
@@ -51,11 +49,20 @@ unsigned searchlen = 0;
 #define leave_alt() ((void)(flags.alt && fprintf(term, "\x1b[?1049l\x1b[?1000l\x1b[m")), flags.alt = 0)
 
 #define get_key(_in) (read(fileno(term), (_in), 1) <= 0 ? exit(EXIT_FAILURE), 0 : 1)
-#define get_line(_in) (*(_in) = line_read_raw(&term_in, &term_raw))
+#define get_line(_in) ((*(_in) = line_read_raw()) && (*(_in))[0])
 
-int myfileno(void) { return fileno(term); }
+void scroll_to(unsigned);
+
 int mygetchar(void) { char c; get_key(&c); return c; }
 int myputchar(int c) { return '\n' == c ? 0 : fputc(c, term); }
+void mylinepause(void) {
+    leave_alt();
+    kill(0, SIGTSTP);
+    enter_alt();
+    scroll_to(top);
+    /* TODO: line.h doesn't redraw it's content, and the prompt text is lost
+     * anyways, so that leaves the user in a somewhat awkward situation... */
+}
 
 unsigned scan_escape(char* ptr, unsigned len) {
     unsigned k = 0;
@@ -69,7 +76,7 @@ void fetch_lines(unsigned till) {
     while (count <= till && !flags.eof) {
         if (capacity-length < 256) {
             char* plines = *lines;
-            *lines = realloc(*lines, capacity*= 2);
+            *lines = *line_rends = realloc(*lines, capacity*= 2);
             for (k = 0; k < count; k++) {
                 lines[k+1] = *lines + (lines[k+1]-plines);
                 line_rends[k+1] = *lines + (line_rends[k+1]-plines);
@@ -150,6 +157,12 @@ void show_lines(unsigned st, unsigned nm) {
                 fputc(ptr[k++], term);
                 w++;
             } /* printable ascii */
+            else if ('\t' == ptr[k]) {
+                unsigned nw = (w&(unsigned)-8) +8;
+                fprintf(term, "%*s", nw-w, "");
+                k++;
+                w = nw;
+            } /* .. and horizontal tab */
 
             else if ((0 <= ptr[k] && ptr[k] < ' ') || 127 == ptr[k]) {
                 if (flags.raw) {
@@ -178,17 +191,9 @@ void show_lines(unsigned st, unsigned nm) {
                     u = ((u & 7) << 18) | ((x & 63) << 12) | ((y & 63) << 6) | (z & 63);
                 }
                 if (pk != k) {
-                    (void)u;
-                    /* XXX: this surely is the worse hack I've ever written in my life so far */
-                    if (2 <= col-w) { /* widest it can be is 2 cells, don't even try if not at least this much available */
-                        char c;
-                        fprintf(term, "%.*s\x1b[6n", k-pk, ptr+pk);
-                        /* ask the terminal to be smart instead, this is as likely to break as it is to work */
-                        while (get_key(&c), ';' != c);
-                        w = 0;
-                        while (get_key(&c), 'R' != c) w = w*10 + c-'0';
-                        w--;
-                    } else w = col;
+                    (void)u; /* TODO: properly estimate display width for codepoint */
+                    fprintf(term, "%.*s\x1b[6n", ++k-pk, ptr+pk);
+                    w++;
                 }
             } /* multi byte (utf-8) */
         } /* kk = 0..len */
@@ -262,17 +267,18 @@ void cleanup(void) {
     line_free();
 
     leave_alt();
-    tcsetattr(fileno(term), TCSANOW, &term_in);
+    tcsetattr(fileno(term), TCSANOW, &term_good);
 
     if (stdin != file) fclose(file);
     if (lines) free(*lines);
     free(lines);
+
     fflush(term);
 }
 
 void setup(void) {
     term = stderr;
-    if (tcgetattr(fileno(term), &term_in)) perror(NULL), exit(EXIT_FAILURE);
+    if (tcgetattr(fileno(term), &term_good)) perror(NULL), exit(EXIT_FAILURE);
     atexit(cleanup);
 
     resize(SIGWINCH);
@@ -284,7 +290,7 @@ void setup(void) {
     *lines = *line_rends = malloc(capacity);
     (*lines)[capacity-1] = '\0';
 
-    term_raw = term_in;
+    term_raw = term_good;
     term_raw.c_iflag&=~(IGNBRK | BRKINT | PARMRK | ISTRIP | INLCR | IGNCR | ICRNL | IXON);
     term_raw.c_oflag&=~(OPOST);
     term_raw.c_lflag&=~(ECHO | ECHONL | ICANON | ISIG | IEXTEN);
@@ -294,7 +300,7 @@ void setup(void) {
     tcsetattr(fileno(term), TCSANOW, &term_raw);
     enter_alt();
 
-    /* could: line_compgen(compgen_words, compgen_clean); */
+    /* TODO: line_compgen(compgen_words, compgen_clean); */
 }
 
 int main(int argc, char** argv) {
@@ -303,41 +309,44 @@ int main(int argc, char** argv) {
 
     file = stdin;
     name = "<stdin>";
-    if (argc && !strcmp("-h", argv[0])) return printf(
-            "Usage: %s [<file> [+<line>]]\n"
-            "\n"
-            "   ^L             force redraw\n"
-            "    q  Q ^Q       quit\n"
-            "   ^Z             background (job control)\n"
-            "\n"
-            "    j ^N ^E down  next line\n"
-            "    k ^P ^Y up    previous line\n"
-            "    d  D ^D       next half-screen\n"
-            "    u  U ^U       previous half-screen\n"
-            "    f  F ^F       next screen\n"
-            "    b  B ^B       previous screen\n"
-            "    g       home  first line\n"
-            "    G       end   last line\n"
-            "    wheel down    next     3 lines\n"
-            "    wheel up      previous 3 lines\n"
-            "\n"
-            "    m  (M)        put mark at top (respectively bottom)\n"
-            "    '   `         go to mark\n"
-            "    /  (?)        search forward (backward)\n"
-            "    n  (N)        next occurence forward (backward)\n"
-            "\n"
-            "    v             open in $EDITOR (default `vi`)\n"
-            "                   (saves stdin to /tmp/pager-stdin if needed)\n"
-            "    r  e          read from file\n"
-            "    w  s          write to file\n"
-            "    !             run shell command\n"
-            "    :             go to line number\n"
-            "    -             toggle option flag:\n"
-            "                   -S  wrap long lines\n"
-            "                   -R  show control characters\n"
-            "                   -N  show line numbers\n"
-            "                   -J  show marks\n"
-            , prog), EXIT_SUCCESS;
+    if (argc && !strcmp("-h", argv[0])) {
+        printf("Usage: %s [<file> [+<line>]]\n"
+               "\n", prog);
+        printf("   ^L             force redraw\n"
+               "    q  Q ^Q       quit\n"
+               "   ^Z             background (job control)\n"
+               "\n");
+        printf("    j ^N ^E down  next line\n"
+               "    k ^P ^Y up    previous line\n"
+               "    d  D ^D       next half-screen\n"
+               "    u  U ^U       previous half-screen\n"
+               "    f  F ^F       next screen\n"
+               "    b  B ^B       previous screen\n"
+               "    g       home  first line\n"
+               "    G       end   last line\n"
+               "    wheel down    next     3 lines\n"
+               "    wheel up      previous 3 lines\n"
+               "\n");
+        printf("    m  (M)        put mark at top (respectively bottom)\n"
+               "    '   `         go to mark\n"
+               "    /  (?)        search forward (backward)\n"
+               "    n  (N)        next occurence forward (backward)\n"
+               "\n");
+        printf("    v             open in $EDITOR (default `vi`)\n"
+               "                   (saves stdin to '" TMP_PAGER_STDIN "' if needed,\n"
+               "                   it will not be automatically deleted!)\n"
+               "    r  e          read from file\n"
+               "    w  s          write to file\n"
+               "    !             run shell command\n"
+               "    :             go to line number\n"
+               "    -             toggle option flag:\n"
+               "                   -S  wrap long lines\n"
+               "                   -R  show control characters\n"
+               "                   -N  show line numbers\n"
+               "                   -J  show marks\n"
+               "\n");
+        return EXIT_SUCCESS;
+    }
     if (argc && strcmp("-", argv[0])) {
         file = fopen(argv[0], "rb");
         name = strrchr(argv[0], '/');
@@ -359,8 +368,8 @@ int main(int argc, char** argv) {
 
         case CTRL('Z'):
             leave_alt();
-            tcsetattr(fileno(term), TCSANOW, &term_in);
-            raise(SIGTSTP);
+            tcsetattr(fileno(term), TCSANOW, &term_good);
+            kill(0, SIGTSTP);
             tcsetattr(fileno(term), TCSANOW, &term_raw);
             enter_alt();
             scroll_to(top);
@@ -451,11 +460,26 @@ int main(int argc, char** argv) {
             } /* get line */
         } break;
 
-        case 'v': if(0) {
-            /* TODO: todo */
-            if (stdin != file) (void)0;
+        case 'v': {
+            char* ed = getenv("EDITOR"), at[8] = {0}, * args[4] = {0};
+            if (!ed || !*ed) ed = "vi";
+            if (stdin == file) {
+                FILE* f = fopen(TMP_PAGER_STDIN, "wb");
+                if (!f) {
+                    msg = "could not open '" TMP_PAGER_STDIN "' file for writing";
+                    break;
+                }
+                fetch_lines(-1);
+                fwrite(*lines, 1, length, f);
+                fclose(f);
+                name = TMP_PAGER_STDIN;
+            }
             cleanup();
-            system("vi /tmp/moins-tmp");
+            args[0] = ed;
+            args[1] = name;
+            if (strstr(ed, "vi")) args[2] = (sprintf(at, "+%u", top+1), at);
+            execvp(ed, args);
+            exit(1);
         } break;
 
         case 'r':
@@ -498,9 +522,10 @@ int main(int argc, char** argv) {
             fprintf(term, "\r\x1b[Krun shell: ");
             if (get_line(&line)) {
                 leave_alt();
-                tcsetattr(fileno(term), TCSANOW, &term_in);
+                tcsetattr(fileno(term), TCSANOW, &term_good);
                 system(line);
                 tcsetattr(fileno(term), TCSANOW, &term_raw);
+                get_key(&c);
                 enter_alt();
                 scroll_to(top);
             }
@@ -518,7 +543,7 @@ int main(int argc, char** argv) {
         } break;
 
         case '-': switch (fprintf(term, "\r\x1b[Ktoggle option: "), get_key(&c), c) {
-            case 'S': flags.wrap++; break;
+            case 'S': flags.wrap++; msg = "not implemented yet: line wrapping"; break; /* TODO: line wrapping */
             case 'R': flags.raw++; scroll_to(top); break;
             case 'N': flags.nums++; scroll_to(top); break;
             case 'J': flags.marks++; scroll_to(top); break;

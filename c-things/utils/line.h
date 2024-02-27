@@ -1,27 +1,49 @@
-/// A small `readline`-like with only '\b', in the most unhinged free-form C.
-/// ```c
-/// char* line;
-/// while (printf(">> "), line = line_read()) {
-///     printf("echo: '%s'\n", line);
-/// }
-/// line_free();
-/// ```
-///
-/// To access the history use `line_histget` and `line_histset`.
-/// For completion see `line_compgen`.
-///
-/// The size of the history is fixed at compile-time; the default value is 128
-/// entries, this can by changed by defining `_hist_ln`.
-///
-/// Make sure to only use LINE_IMPLEMENTATION once.
-///
-/// Define line_fileno, line_getchar and line_putchar to retarget.
+/**
+ * A small `readline`-like with only '\b', in the most unhinged free-form C.
+ * ```c
+ * char* line;
+ * while (printf(">> "), line = line_read()) {
+ *     printf("echo: '%s'\n", line);
+ * }
+ * line_free();
+ * ```
+ *
+ * Notes: ^D when empty returns NULL, but ^C returns an empty line ("").
+ *
+ * To access the history use `line_histget` and `line_histset`.
+ * For completion see `line_compgen`.
+ *
+ * The size of the history is fixed at compile-time; the default value is 128
+ * entries, this can by changed by defining `_hist_ln`.
+ *
+ * Make sure to only use LINE_IMPLEMENTATION once.
+ *
+ * Define line_getchar/line_putchar and line_pause/line_resume to retarget.
+ *
+ * Defaults:
+ * ```c
+ * #define line_fileno STDIN_FILENO
+ * #define line_getchar getchar
+ * #define line_putchar putchar
+ * #define line_ready() tcsetattr(line_fileno, TCSANOW, term_raw)
+ * #define line_reset() tcsetattr(line_fileno, TCSANOW, term_good)
+ * #define line_pause() kill(0, SIGTSTP)
+ * ```
+ *
+ * If retagetting by changing these values, it may also be preferable to use
+ * line_read_raw instead. line_read is a simple wrapper around it that
+ * expects the target to be a terminal in "cooked" state and handles
+ * line_fileno not being a terminal (typically a pipe). So it will always call
+ * to tcgetattr.
+ * Defining line_ready, line_pause and line_reset to no-op will essentially
+ * disable ^Z (background process group for shell job control).
+ */
 
 /* TODO: see if needed
     #if _WIN32
-    // Raw input mode
+    / * Raw input mode * /
     SetConsoleMode(GetStdHandle(STD_INPUT_HANDLE), ENABLE_PROCESSED_INPUT);
-    // Enable ANSI/VT sequences on windows
+    / * Enable ANSI/VT sequences on windows * /
     HANDLE output_handle = GetStdHandle(STD_OUTPUT_HANDLE);
     if (output_handle != INVALID_HANDLE_VALUE) {
         DWORD old_mode;
@@ -32,37 +54,41 @@
     #endif
 */
 
-struct termios;
-
 char* line_read(void);
-// terminal is already in raw mode (term_good and term_raw are used when handling ^Z)
-char* line_read_raw(struct termios* term_good, struct termios* term_raw);
-// this is a direct access to the history (careful with editing it)
+/* terminal (or other) is already in "raw" mode */
+char* line_read_raw(void);
+/* this is a direct access to the history (careful with editing it) */
 char** line_histget(unsigned* count);
-// the lines are copied using the default allocator
+/* the lines are copied using the default allocator */
 void line_histset(char** lines, unsigned count);
-// always call this after at least one `line_read`
+/* always call this after at least one `line_read` */
 void line_free(void);
-// `words` should return a NULL-terminated list of completions insertable as-is
-// `clean` can be NULL, otherwise it is called with the result afterward
+/* `words` should return a NULL-terminated list of completions insertable as-is */
+/* `clean` can be NULL, otherwise it is called with the result afterward */
 void line_compgen(char** (*words)(char* line, unsigned point), void (*clean)(char** words));
 
-#ifdef LINE_IMPLEMENTATION
+#if 1 /*def LINE_IMPLEMENTATION */
 #include <stdlib.h>
-#include <stdio.h>
 #include <string.h>
-#include <termios.h>
-#include <unistd.h>
-#include <signal.h>
 
 #ifndef line_fileno
-#define line_fileno STDIN_FILENO
+# include <unistd.h>
+# define line_fileno STDIN_FILENO
 #endif
-#ifndef line_getchar
-#define line_getchar getchar
+#if !defined line_getchar || !defined line_putchar
+# include <stdio.h>
+# define line_getchar getchar
+# define line_putchar putchar
 #endif
-#ifndef line_putchar
-#define line_putchar putchar
+#if !defined line_ready || !defined line_reset
+# include <termios.h>
+# define line_ready() tcsetattr(line_fileno, TCSANOW, &term_raw)
+# define line_reset() tcsetattr(line_fileno, TCSANOW, &term_good)
+# define HAS_TERMIOS
+#endif
+#ifndef line_pause
+# include <signal.h>
+# define line_pause() kill(0, SIGTSTP)
 #endif
 
 static char** (*_compgen_words)(char* line, unsigned point) = NULL;
@@ -113,17 +139,20 @@ static unsigned _hist_at = 0;
     } while (0)
 
 char* line_read(void) {
-    char* s = NULL;
+    char* s;
     unsigned i = 0;
 
-    struct termios term_good;
+#ifdef HAS_TERMIOS
+    struct termios term_good, term_raw;
+
     if (tcgetattr(line_fileno, &term_good)) {
         static unsigned const n = 64-12;
+        char c;
         s = calloc(n, 1);
         if (!s) return NULL;
         s[n-1] = ESC;
 
-        char c = line_getchar();
+        c = line_getchar();
         if (EOF == c) return NULL;
 
         while (1) {
@@ -143,36 +172,40 @@ char* line_read(void) {
 
             s[i++] = c;
             c = line_getchar();
-        } // while 1 - breaks on eof/eol and alloc fails
+        } /* while 1 - breaks on eof/eol and alloc fails */
 
         return free(_hist_ls[0]), _hist_ls[0] = s;
-    } // if not tty
+    } /* if not tty */
 
-    struct termios term_raw = term_good;
+    term_raw = term_good;
     term_raw.c_iflag&=~(IGNBRK | BRKINT | PARMRK | ISTRIP | INLCR | IGNCR | ICRNL | IXON);
     term_raw.c_oflag&=~(OPOST);
     term_raw.c_lflag&=~(ECHO | ECHONL | ICANON | ISIG | IEXTEN);
     term_raw.c_cflag&=~(CSIZE | PARENB);
     term_raw.c_cflag|= (CS8);
-    tcsetattr(line_fileno, TCSANOW, &term_good);
+#endif /* HAS_TERMIOS */
+
+    line_ready();
+    s = line_read_raw();
+    line_reset();
+
     return s;
 }
 
-char* line_read_raw(struct termios* term_good, struct termios* term_raw) {
-    char* s;
+char* line_read_raw() {
+    char c, * s;
     unsigned i = 0;
+    int reprocess = 0;
 
     if (_hist_at) for (s = _hist_ls[_hist_at]; s[i]; i++) line_putchar(s[i]);
     else if (!_hist_ls[0] || _hist_ls[0][0]) {
-        memmove(_hist_ls+1, _hist_ls, (_hist_ln-1)*sizeof(char*));
         static unsigned const n = 64-12;
+        memmove(_hist_ls+1, _hist_ls, (_hist_ln-1)*sizeof(char*));
         _hist_ls[0] = s = calloc(n, 1);
         if (!s) return NULL;
         s[n-1] = ESC;
     } else s = _hist_ls[0];
 
-    int reprocess = 0;
-    char c;
     while (1) {
         if (!reprocess) c = line_getchar();
         else reprocess = 0;
@@ -195,7 +228,7 @@ char* line_read_raw(struct termios* term_good, struct termios* term_raw) {
                     case 'd':
                         if (s[i]) {
                             unsigned j = i, k;
-                            WORD_FWD();
+                            WORD_FWD((void)0);
                             for (k = j; s[i]; k++, i++) line_putchar(s[k] = s[i]);
                             s[k] = '\0';
                             for (; k != i; k++) line_putchar(' ');
@@ -225,7 +258,8 @@ char* line_read_raw(struct termios* term_good, struct termios* term_raw) {
 
                     case 't':
                         if (i) {
-                            unsigned j = i, bst, ben, fst, fen;
+                            char* cpy;
+                            unsigned k, j = i, bst, ben, fst, fen, len;
                             int found = 0;
                             WORD_BKW(if (!found && IS_LETTER(s[i])) { found = 1; ben = i+1; });
                             bst = i;
@@ -245,14 +279,14 @@ char* line_read_raw(struct termios* term_good, struct termios* term_raw) {
                                 if (!found) break;
                             }
                             i = j;
-                            unsigned len = strlen(s);
-                            char* cpy = malloc(len);
+                            len = strlen(s);
+                            cpy = malloc(len);
                             if (!cpy) break;
                             memcpy(cpy, s, len);
                             for (; i != bst; i--) line_putchar('\b');
-                            for (unsigned k = fst; k != fen; k++, i++) line_putchar(s[i] = cpy[k]);
-                            for (unsigned k = ben; k != fst; k++, i++) line_putchar(s[i] = cpy[k]);
-                            for (unsigned k = bst; k != ben; k++, i++) line_putchar(s[i] = cpy[k]);
+                            for (k = fst; k != fen; k++, i++) line_putchar(s[i] = cpy[k]);
+                            for (k = ben; k != fst; k++, i++) line_putchar(s[i] = cpy[k]);
+                            for (k = bst; k != ben; k++, i++) line_putchar(s[i] = cpy[k]);
                             free(cpy);
                         }
                         break;
@@ -261,7 +295,7 @@ char* line_read_raw(struct termios* term_good, struct termios* term_raw) {
                         WORD_FWD(line_putchar(IS_LETTER(s[i]) ? s[i]&=~32 : s[i]));
                         break;
                 }
-                break; // case ESC
+                break; /* case ESC */
 
             case CTRL(']'):
                 for (c = line_getchar(); s[i] && c != s[i]; i++) line_putchar(s[i]);
@@ -279,12 +313,12 @@ char* line_read_raw(struct termios* term_good, struct termios* term_raw) {
                 line_putchar('^');
                 line_putchar('C');
                 s[0] = '\0';
-                // fall through
+                /* fall through */
             case CTRL('M'):
             case CTRL('J'):
                 if (s[0] && 1 < _hist_at) strcpy(_hist_ls[0], s);
                 _hist_at = 0;
-                // fall through
+                /* fall through */
             case CTRL('O'):
                 if (_hist_at) _hist_at--;
                 line_putchar('\r');
@@ -302,7 +336,7 @@ char* line_read_raw(struct termios* term_good, struct termios* term_raw) {
                     }
                     break;
                 }
-                // fall through
+                /* fall through */
             case EOF:
                 return NULL;
 
@@ -330,16 +364,17 @@ char* line_read_raw(struct termios* term_good, struct termios* term_raw) {
                 if (_compgen_words) {
                     char** words = _compgen_words(s, i);
                     while (words && words[0]) {
-                        unsigned k, j = 0;
+                        char* cpy;
+                        unsigned k, j = 0, n;
                         for (k = 0; words[k]; k++) {
                             unsigned l = strlen(words[k]);
                             if (j < l) j = l;
                         }
                         for (k = i; ESC != s[k]; k++);
-                        unsigned n = (k+1)+12;
+                        n = (k+1)+12;
                         while (n < k+j) n*= 2;
                         n-= 12;
-                        char* cpy = malloc(n);
+                        cpy = malloc(n);
                         if (!cpy) break;
                         memcpy(cpy, s, k);
                         if (n-k-1) memset(cpy+k+1, '\0', n-k-2);
@@ -351,15 +386,15 @@ char* line_read_raw(struct termios* term_good, struct termios* term_raw) {
                         k = 0;
                         j = i;
                         while (1) {
+                            unsigned l = 0, il;
+                            int z = 0;
                             for (; j != i; i--) line_putchar('\b');
                             for (; words[k][i-j]; i++) line_putchar(s[i] = words[k][i-j]);
-                            unsigned l = 0;
-                            int z = 0;
                             for (; cpy[j+l]; l++) {
                                 z = z || !s[i+l];
                                 line_putchar(s[i+l] = cpy[j+l]);
                             }
-                            unsigned il = i+l;
+                            il = i+l;
                             if (!z) for (; s[i+l]; l++) line_putchar(' ');
                             s[il] = '\0';
                             for (; l; l--) line_putchar('\b');
@@ -368,7 +403,7 @@ char* line_read_raw(struct termios* term_good, struct termios* term_raw) {
                         }
                         free(cpy);
                         break;
-                    } // if words (while, so that it can break)
+                    } /* if words (while, so that it can break) */
                     if (_compgen_clean) _compgen_clean(words);
                 }
                 break;
@@ -416,7 +451,7 @@ char* line_read_raw(struct termios* term_good, struct termios* term_raw) {
             case CTRL('S'):
                 {
                     char sr_s[32];
-                    unsigned sr_i = 0;
+                    unsigned sr_i = 0, k, j;
                     int rev = c == CTRL('R');
                     sr_s[0] = '\0';
                     sr_i = i;
@@ -430,16 +465,15 @@ char* line_read_raw(struct termios* term_good, struct termios* term_raw) {
                     sr_s[sr_i = 0] = '\0';
                     while (1) {
                         line_putchar('|');
-                        unsigned k = 0;
-                        for (; s[k]; k++) line_putchar(s[k]);
+                        for (k = 0; s[k]; k++) line_putchar(s[k]);
                         k++, line_putchar(' ');
                         for (; k != i; k--) line_putchar('\b');
                         c = line_getchar();
                         if (' ' <= c && c <= '~' && sr_i <31) {
-                            for (unsigned k = i+1; k != 0; k--) line_putchar('\b');
+                            for (k = i+1; k != 0; k--) line_putchar('\b');
                             line_putchar(sr_s[sr_i++] = c);
                         } else if ((DEL == c || CTRL('H') == c) && sr_i) {
-                            for (unsigned k = i+2; k != 0; k--) line_putchar('\b');
+                            for (k = i+2; k != 0; k--) line_putchar('\b');
                             --sr_i;
                         } else {
                             reprocess = /*ESC != c &&*/ CTRL('G') != c && (rev ? CTRL('R') : CTRL('S')) != c;
@@ -450,28 +484,27 @@ char* line_read_raw(struct termios* term_good, struct termios* term_raw) {
                             char* at = strstr(_hist_ls[_hist_at], sr_s);
                             if (!at) rev ? _hist_at++ : _hist_at--;
                             else {
-                                unsigned k = 1;
                                 line_putchar(' ');
-                                for (; s[k]; k++) line_putchar(' ');
+                                for (k = 1; s[k]; k++) line_putchar(' ');
                                 for (; k; k--) line_putchar('\b');
                                 i = at - (s = _hist_ls[_hist_at]);
                                 break;
                             }
-                        } // while strstr
-                    } // while 1 - line_getchar (also breaks if not handled)
-                    unsigned k = i+sr_i+4;
-                    for (; k; k--) line_putchar('\b');
+                        } /* while strstr */
+                    } /* while 1 - line_getchar (also breaks if not handled) */
+                    for (k = i+sr_i+4; k; k--) line_putchar('\b');
                     for (; s[k]; k++) line_putchar(s[k]);
-                    for (unsigned j = 0; j != sr_i+4; j++, k++) line_putchar(' ');
+                    for (j = 0; j != sr_i+4; j++, k++) line_putchar(' ');
                     for (; k != i; k--) line_putchar('\b');
                 }
-                break; // case ^R/^S
+                break; /* case ^R/^S */
 
             case CTRL('T'):
                 if (i) {
+                    char p;
                     if (!s[i]) i--, line_putchar('\b');
                     line_putchar('\b');
-                    char p = s[i-1];
+                    p = s[i-1];
                     line_putchar(s[i-1] = s[i]);
                     line_putchar(s[i++] = p);
                 }
@@ -500,16 +533,16 @@ char* line_read_raw(struct termios* term_good, struct termios* term_raw) {
                 break;
 
             case CTRL('Z'):
-                tcsetattr(line_fileno, TCSANOW, term_good);
-                raise(SIGTSTP);
-                tcsetattr(line_fileno, TCSANOW, term_raw);
+                line_reset();
+                line_pause();
+                line_ready();
                 break;
 
             default:
                 if (' ' <= c && c <= '~') {
                     char p = s[i];
+                    unsigned k = i+1;
                     line_putchar(s[i++] = c);
-                    unsigned k = i;
                     while (p) {
                         char w = s[k];
                         line_putchar(s[k++] = p);
@@ -525,8 +558,8 @@ char* line_read_raw(struct termios* term_good, struct termios* term_raw) {
                     s[k] = p;
                     for (; k != i; k--) line_putchar('\b');
                 }
-        } // switch c
-    } // while 1
+        } /* switch c */
+    } /* while 1 */
 
     return s;
 }
@@ -537,8 +570,9 @@ char** line_histget(unsigned* count) {
 }
 
 void line_histset(char** lines, unsigned count) {
+    unsigned k;
     line_free();
-    if (lines && count) for (unsigned k = 0; count && k < _hist_ln; count--, k++) {
+    if (lines && count) for (k = 0; count && k < _hist_ln; count--, k++) {
         unsigned l = strlen(lines[k]), n = 64;
         while (n < l) n*= 2;
         n-= 12;
@@ -549,7 +583,8 @@ void line_histset(char** lines, unsigned count) {
 }
 
 void line_free(void) {
-    for (unsigned k = _hist_at = 0; k < _hist_ln; k++) _hist_ls[k] = (free(_hist_ls[k]), NULL);
+    unsigned k;
+    for (k = _hist_at = 0; k < _hist_ln; k++) _hist_ls[k] = (free(_hist_ls[k]), NULL);
 }
 
 void line_compgen(char** (*words)(char* line, unsigned point), void (*clean)(char** words)) {
@@ -563,4 +598,11 @@ void line_compgen(char** (*words)(char* line, unsigned point), void (*clean)(cha
 #undef IS_WORD
 #undef WORD_BKW
 #undef WORD_FWD
-#endif // LINE_IMPLEMENTATION
+#undef HAS_TERMIOS
+#undef line_fileno
+#undef line_getchar
+#undef line_putchar
+#undef line_ready
+#undef line_reset
+#undef line_pause
+#endif /* LINE_IMPLEMENTATION */
