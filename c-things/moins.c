@@ -85,7 +85,9 @@ void fetch_lines(unsigned till) {
 
         fprintf(term, " waiting...\r");
         fflush(term);
+        tcsetattr(fileno(term), TCSANOW, &term_good);
         len = fread(*lines+length, 1, capacity-length-1, file);
+        tcsetattr(fileno(term), TCSANOW, &term_raw);
         (*lines)[length+len] = '\0';
 
         for (k = 0; k < len; k++) if ('\n' == (*lines)[length+k]) {
@@ -117,7 +119,7 @@ void show_lines(unsigned st, unsigned nm) {
     char* ptr;
 
     fetch_lines((unsigned long)st+nm <= (unsigned)-1 ? st+nm : (unsigned)-1);
-    if ((unsigned long)count+row-1 <= st) st = count-1;
+    if ((unsigned long)count+row-1 <= st) st = count ? count-1 : 0;
 
     if (st < count) for (ptr = line_rends[st]; ptr < lines[st]; ptr++) if (CTRL('[') == *ptr) {
         unsigned n = scan_escape(ptr, lines[st]-ptr);
@@ -129,8 +131,8 @@ void show_lines(unsigned st, unsigned nm) {
     for (l = st; l < (unsigned long)st+nm; l++) {
         unsigned found = 0;
 
-        ptr = l < count ? lines[l] : "~";
-        len = l < count ? lines[l+1]-lines[l]-1 : 1;
+        ptr = l < count ? lines[l]              : count == l && lines[count] < *lines+length ? lines[count]               : "~";
+        len = l < count ? lines[l+1]-lines[l]-1 : count == l && lines[count] < *lines+length ? *lines+length-lines[count] : 1;
 
         w = 0;
         fprintf(term, "\x1b[K");
@@ -213,6 +215,7 @@ void show_lines(unsigned st, unsigned nm) {
 }
 
 void scroll_up(unsigned by) {
+    if (!count) return;
     if (count-1 < by+top) by = count-1-top;
     if (!by) return;
     fprintf(term, "\x1b[%uS\x1b[%uH", by, row-by);
@@ -229,6 +232,7 @@ void scroll_dw(unsigned by) {
 }
 
 void scroll_to(unsigned to) {
+    if (!count) to = 0;
     fprintf(term, "\x1b[H");
     show_lines(to, row-1);
     top = count-1 < to ? count-1 : to;
@@ -238,7 +242,14 @@ void status(char* msg) {
     unsigned len;
     char tmp[1024] = {0};
 
-    len = sprintf(tmp, " %s  lines %d-%d (of %s%d)", name, top+1, count < top+row-1 ? count : top+row-1, flags.eof ? "" : ">", count);
+    len = sprintf(tmp, " %s  lines %u-%u (of %s%u"
+            , name
+            , count ? top+1 : 0
+            , count < top+row-1 ? count : top+row-1
+            , flags.eof ? "" : ">"
+            , count);
+    if (lines[count] < *lines+length) len+= sprintf(tmp+len, " +%lub", *lines+length-lines[count]);
+    tmp[len++] = ')';
     if (msg) len+= sprintf(tmp+len, "  %s", msg);
 
     if (len+1 < col) memset(tmp+len, ' ', col-1-len);
@@ -251,7 +262,7 @@ void status(char* msg) {
     fflush(term);
 }
 
-void resize(int sig) {
+void sigwinch(int sig) {
     struct winsize winsz;
     if (SIGWINCH == sig && !ioctl(fileno(term), TIOCGWINSZ, &winsz) && winsz.ws_row && winsz.ws_col) {
         row = winsz.ws_row;
@@ -260,7 +271,15 @@ void resize(int sig) {
             scroll_to(top);
             status(NULL);
         }
+        signal(SIGWINCH, sigwinch);
     }
+}
+
+void sigterm(int sig) {
+    (void)sig;
+    write(STDERR_FILENO, "\x1b[?1049l\x1b[?1000l\x1b[m", strlen("\x1b[?1049l\x1b[?1000l\x1b[m"));
+    tcsetattr(STDERR_FILENO, TCSANOW, &term_good);
+    _exit(0);
 }
 
 void cleanup(void) {
@@ -281,8 +300,9 @@ void setup(void) {
     if (tcgetattr(fileno(term), &term_good)) perror(NULL), exit(EXIT_FAILURE);
     atexit(cleanup);
 
-    resize(SIGWINCH);
-    signal(SIGWINCH, resize);
+    sigwinch(SIGWINCH);
+    signal(SIGTERM, sigterm);
+    signal(SIGINT, sigterm);
 
     lines = malloc(row*2 * sizeof*lines);
     line_rends = malloc(row*2 * sizeof*line_rends);
