@@ -8,7 +8,8 @@
  * line_free();
  * ```
  *
- * Notes: ^D when empty returns NULL, but ^C returns an empty line ("").
+ * Notes: ^D when empty returns NULL, but ^C returns an empty line ("") and so
+ * does ESC when empty.
  *
  * To access the history use `line_histget` and `line_histset`.
  * For completion see `line_compgen`.
@@ -211,6 +212,7 @@ char* line_read_raw() {
         else reprocess = 0;
         switch (c) {
             case ESC:
+                if (!*s) return s;
                 switch (c = line_getchar()) {
                     case 'b':
                         WORD_BKW(line_putchar('\b'));
@@ -326,7 +328,7 @@ char* line_read_raw() {
                 return s;
 
             case CTRL('D'):
-                if ('\0' != *s) {
+                if (*s) {
                     if (s[i]) {
                         unsigned j = i++, k;
                         for (k = j; s[i]; k++, i++) line_putchar(s[k] = s[i]);

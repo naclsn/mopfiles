@@ -34,12 +34,13 @@ unsigned count = 0;       /* line count (eg if there's 2 lines, then it's lines[
 unsigned top = 0;         /* the index of the start of the first visible line */
 
 struct {
-    unsigned alt :1,   /* in alt screen (not toggleable) */
-             eof :1,   /* found eof (not toggleable) */
-             wrap :1,  /* wrap long lines (not implemented yet) */
-             raw :1,   /* show ctrl chars */
-             nums :1,  /* show line numbers */
-             marks :1; /* show marks */
+    unsigned alt      :1, /* in alt screen (not toggleable) */
+             eof      :1, /* found eof (not toggleable) */
+             wrap     :1, /* wrap long lines */
+             cutwords :1, /* when wrapping, do cut words */
+             raw      :1, /* show ctrl chars */
+             nums     :1, /* show line numbers */
+             marks    :1; /* show marks */
 } flags = {0};
 unsigned marks[26] = {0}; /* a-z (A-Z fold back to it) */
 char* search = NULL;
@@ -68,6 +69,11 @@ unsigned scan_escape(char* ptr, unsigned len) {
     unsigned k = 0;
     while (k < len && 'm' != ptr[++k]);
     return ++k;
+}
+
+unsigned cell_count(unsigned cp) {
+    (void)cp; /* TODO: properly estimate display width for codepoint */
+    return 1;
 }
 
 void fetch_lines(unsigned till) {
@@ -129,23 +135,48 @@ void show_lines(unsigned st, unsigned nm) {
     }
 
     for (l = st; l < (unsigned long)st+nm; l++) {
-        unsigned found = 0;
+        unsigned initw, found = 0;
+        unsigned lastwrap_k = 0, lastwrap_w = 0;
 
+        /* current line OR trailling chars after last '\n' OR "~" */
         ptr = l < count ? lines[l]              : count == l && lines[count] < *lines+length ? lines[count]               : "~";
         len = l < count ? lines[l+1]-lines[l]-1 : count == l && lines[count] < *lines+length ? *lines+length-lines[count] : 1;
 
         w = 0;
         fprintf(term, "\x1b[K");
-        if (flags.marks && l < count) {
-            for (k = 0; k < 26; k++) if (l+1 == marks[k]) {
-                fprintf(term, "%c ", 'a'+k);
-                break;
-            } if (26 == k) fprintf(term, "  ");
+        if (flags.marks) {
+            if (l < count) {
+                for (k = 0; k < 26; k++) if (l+1 == marks[k]) {
+                    fprintf(term, "%c ", 'a'+k);
+                    break;
+                } if (26 == k) fprintf(term, "  ");
+            } else fprintf(term, "  ");
             w+= 2;
         }
-        if (flags.nums && l < count) w+= fprintf(term, "%4u ", l);
+        if (flags.nums) {
+            if (l < count) w+= fprintf(term, "%4u ", l+1);
+            else if (count == l) w+= fprintf(term, "%4s ", "+");
+        }
+        initw = w;
 
-        for (k = 0; k < len && w < col;) {
+        for (k = 0; k < len && (flags.wrap || w < col);) {
+            if (flags.wrap && col <= w) {
+                if (!flags.cutwords && lastwrap_k) {
+                  /* weird logic below is because a putc on last column doesn't
+                   * move the cursor to the next line _yet_ (only the following
+                   * putc would), so we need to put one less '\b' except if we
+                   * only need to put one (in which case we still need to put
+                   * it) */
+                  if (--w == lastwrap_w) fputc('\b', term);
+                  else while (lastwrap_w < w--) fputc('\b', term);
+                  k = lastwrap_k;
+                  fprintf(term, "\x1b[K");
+                } /* !cutwords */
+
+                fprintf(term, "\r\n%*s", w = initw, "");
+                nm--; /* TODO: do something */
+            } /* wrap */
+
             if (search) {
                 if (!found) {
                     if (!memcmp(ptr+k, search, searchlen)) {
@@ -158,12 +189,17 @@ void show_lines(unsigned st, unsigned nm) {
             if (' ' <= ptr[k] && ptr[k] <= '~') {
                 fputc(ptr[k++], term);
                 w++;
+                /* can wrap if not 0-9A-Za-z */
+                if ( ((ptr[k-1]|32) < '0' || '9' < (ptr[k-1]|32)) &&
+                        ((ptr[k-1]|32) < 'a' || 'z' < (ptr[k-1]|32)) )
+                    lastwrap_k = k, lastwrap_w = w;
             } /* printable ascii */
             else if ('\t' == ptr[k]) {
                 unsigned nw = (w&(unsigned)-8) +8;
                 fprintf(term, "%*s", nw-w, "");
                 k++;
                 w = nw;
+                lastwrap_k = k, lastwrap_w = w;
             } /* .. and horizontal tab */
 
             else if ((0 <= ptr[k] && ptr[k] < ' ') || 127 == ptr[k]) {
@@ -178,6 +214,7 @@ void show_lines(unsigned st, unsigned nm) {
                         k+= n;
                     }
                 }
+                lastwrap_k = k, lastwrap_w = w;
             } /* ctrls + del */
 
             else {
@@ -193,9 +230,10 @@ void show_lines(unsigned st, unsigned nm) {
                     u = ((u & 7) << 18) | ((x & 63) << 12) | ((y & 63) << 6) | (z & 63);
                 }
                 if (pk != k) {
-                    (void)u; /* TODO: properly estimate display width for codepoint */
                     fprintf(term, "%.*s\x1b[6n", ++k-pk, ptr+pk);
-                    w++;
+                    w+= cell_count(u);
+                    /* TODO: check is word break (eg cp=0xe9 shouln't) */
+                    lastwrap_k = k, lastwrap_w = w;
                 }
             } /* multi byte (utf-8) */
         } /* kk = 0..len */
@@ -233,7 +271,7 @@ void scroll_dw(unsigned by) {
 
 void scroll_to(unsigned to) {
     if (!count) to = 0;
-    fprintf(term, "\x1b[H");
+    fprintf(term, "\x1b[H\x1b[J");
     show_lines(to, row-1);
     top = count-1 < to ? count-1 : to;
 }
@@ -325,7 +363,7 @@ void setup(void) {
 
 int main(int argc, char** argv) {
     char const* prog = (argc--, *argv++);
-    char* msg = NULL, c = CTRL('L');
+    char* msg = NULL, c = CTRL('L'); /* TODO: less' -F */
 
     file = stdin;
     name = "<stdin>";
@@ -358,9 +396,10 @@ int main(int argc, char** argv) {
                "    r  e          read from file\n"
                "    w  s          write to file\n"
                "    !             run shell command\n"
-               "    :             go to line number\n"
-               "    -             toggle option flag:\n"
+               "    :             go to line number\n");
+        printf("    -  _          toggle option flag:\n"
                "                   -S  wrap long lines\n"
+               "                   -w  when wrapping, do cut words\n"
                "                   -R  show control characters\n"
                "                   -N  show line numbers\n"
                "                   -J  show marks\n"
@@ -428,7 +467,7 @@ int main(int argc, char** argv) {
         case 'M':
             fprintf(term, "\r\x1b[Kset mark bot: ");
             get_key(&c); c|= 32;
-            if ('a' <= c && c <= 'z') { marks[c-'a'] = top+row-1; scroll_to(top); }
+            if ('a' <= c && c <= 'z') { marks[c-'a'] = top+row-1 < count ? top+row-1 : count; scroll_to(top); }
             else msg = "invalid mark (should be a-z)";
             break;
         case '\'': case '`':
@@ -562,11 +601,12 @@ int main(int argc, char** argv) {
             }
         } break;
 
-        case '-': switch (fprintf(term, "\r\x1b[Ktoggle option: "), get_key(&c), c) {
-            case 'S': flags.wrap++; msg = "not implemented yet: line wrapping"; break; /* TODO: line wrapping */
-            case 'R': flags.raw++; scroll_to(top); break;
-            case 'N': flags.nums++; scroll_to(top); break;
-            case 'J': flags.marks++; scroll_to(top); break;
+        case '-': case '_': switch (fprintf(term, "\r\x1b[Ktoggle option: "), get_key(&c), c) {
+            case 'S': flags.wrap++;     scroll_to(top); break;
+            case 'w': flags.cutwords++; scroll_to(top); break;
+            case 'R': flags.raw++;      scroll_to(top); break;
+            case 'N': flags.nums++;     scroll_to(top); break;
+            case 'J': flags.marks++;    scroll_to(top); break;
         } break;
     } while (status(msg), msg = NULL, get_key(&c));
 
