@@ -1,3 +1,5 @@
+/** small replacement for `less` that I would somewhat consider better */
+
 #define _POSIX_SOURCE /* kill, fileno */
 #include <errno.h>
 #include <signal.h>
@@ -476,6 +478,7 @@ int main(int argc, char** argv) {
                "    b  B ^B       previous screen\n"
                "    g       home  first line\n"
                "    G       end   last line\n"
+               "   ^G             load to last line (without actually scrolling)\n"
                "    wheel down    next     3 lines\n"
                "    wheel up      previous 3 lines\n"
                "\n");
@@ -541,6 +544,7 @@ int main(int argc, char** argv) {
         case 'b': case 'B': case CTRL('B'): scroll_dw(row-1); break;
         case 'g': scroll_to(0); break;
         case 'G': fetch_lines(-1); scroll_to(count-row+1); break;
+        case CTRL('G'): fetch_lines(-1); break;
 
         case CTRL('['): switch (get_key(&c), c) {
             case '[': switch (get_key(&c), c) {

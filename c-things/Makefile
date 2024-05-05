@@ -8,4 +8,5 @@ frame-LDFLAGS = -pthread -lGL -lX11
 endif
 
 trem: trem.c; $(CC) $< -o $@ $(CFLAGS) $(frame-LDFLAGS)
-moins: moins.c; $(CC) $< -o $@ $(CFLAGS) $(frame-LDFLAGS)
+moins: moins.c; $(CC) $< -o $@ $(CFLAGS)
+makeshift: makeshift.c; $(CC) $< -o $@ $(CFLAGS)
