@@ -1,20 +1,27 @@
 /** dynamic arrays, with eg `typedef dyarr(char) buf`
 
-    but here's a simplified one I use too, but it still has a pesky inline function:
+    and here's a simplified one I use too, but it still has a pesky inline function:
     ```c
 
+// exit on failure
+#define OOM  (fputs("OOM", stderr), exit(EXIT_FAILURE), NULL)
+// null on failure
+#define OOM  NULL
+
+#ifndef arry
 #define arry(...) struct { __VA_ARGS__* ptr; size_t len, cap; }
 #define frry(__a) ((__a)->cap ? free((__a)->ptr) : (void)0, (__a)->ptr = NULL, (__a)->len = (__a)->cap = 0)
-#define push(__a) ((__a)->len < (__a)->cap || ((__a)->ptr = realloc((__a)->ptr, ((__a)->cap+= (__a)->cap+8)*sizeof*(__a)->ptr)) ? (void)0 : exitf("OOM"), (__a)->ptr+(__a)->len++)
+#define push(__a) ((__a)->len < (__a)->cap || ((__a)->cap && ((__a)->ptr = realloc((__a)->ptr, ((__a)->cap+= (__a)->cap+8)*sizeof*(__a)->ptr))) ? (__a)->ptr+(__a)->len++ : (OOM))
 #define grow(__a, __k, __n) _grow((char**)&(__a)->ptr, &(__a)->len, &(__a)->cap, sizeof*(__a)->ptr, (__k), (__n))
 #define last(__a) ((__a)->ptr+(__a)->len-1)
-#define each(__a) for (void ref _ptr = (__a)->ptr, ref _end = _ptr+(__a)->len; _end == (__a)->ptr ? (__a)->ptr = _ptr, 0 : 1; ++(__a)->ptr)
-static inline void* _grow(char* ref ptr, size_t ref len, size_t ref cap, size_t const s, size_t const k, size_t const n) {
+#define each(__a) for (void* const _ptr = (__a)->ptr,* const _end = _ptr+(__a)->len; _end == (__a)->ptr ? (__a)->ptr = _ptr, 0 : 1; ++(__a)->ptr)
+static inline void* _grow(char** const ptr, size_t* const len, size_t* const cap, size_t const s, size_t const k, size_t const n) {
     size_t const nlen = *len+n;
-    if (*cap < nlen && !(*ptr = realloc(*ptr, (*cap = nlen)*s))) exitf("OOM");
+    if (*cap < nlen && !(cap && (*ptr = realloc(*ptr, (*cap = nlen)*s)))) return (OOM);
     if (k < *len) memmove(*ptr+(k+n)*s, *ptr+k*s, (*len-k)*s);
     return *len = nlen, *ptr+k*s;
 }
+#endif
 
     ```
 
