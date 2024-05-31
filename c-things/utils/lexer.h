@@ -1,3 +1,42 @@
+/// C lexer with inbuilt preprocessor; example:
+/// ```c
+/// lex_state ls = {0};                    // $ cpp
+/// lex_define(&ls, "_XOPEN_SOURCE", "1"); //     -D_XOPEN_SOURCE=1
+/// lex_include(&ls, "lib/include");       //     -Ilib/include
+/// lex_entry(&ls, "./main.c");            //     ./main.c
+///
+/// size_t k;
+/// // EOF is an empty token ("", so starts with '\0')
+/// while (k = lext(ls), ls.tokens.ptr[k]) {
+///     printf("[%s:%3zu]\t%s\n",
+///             // current file name as C-string
+///             ls.work.ptr+ls.sources.ptr[ls.sources.len-1].file,
+///             // current line number, 1-based
+///             ls.sources.ptr[ls.sources.len-1].line,
+///             // returned token `k` as C-string
+///             ls.tokens.ptr+k);
+/// }
+///
+/// lex_free(&ls);
+/// ```
+///
+/// Recognised 'user config' macros are the following:
+/// - on_lex_comment
+/// - on_lex_sysinclude
+/// - on_lex_missinclude
+/// - on_lex_unknowndir
+/// - on_lex_preprocerr
+
+// TODO: remove `notif`s
+
+#ifndef LEXER_H
+#define LEXER_H
+
+// this for testin, you don need that
+#ifdef LEXER_H_SIMPLE_CPP
+#define LEXER_H_IMPLEMENTATION
+#endif
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -10,58 +49,24 @@ void lex_define(lex_state* const ls, char const* const name, char const* const v
 /// remove from defined macros (-U)
 void lex_undef(lex_state* const ls, char const* const name);
 /// add to include paths (-I)
-void lex_include(lex_state* const ls, char const* const path);
+void lex_incdir(lex_state* const ls, char const* const path);
 /// set the entry file, lexer ready to go
 void lex_entry(lex_state* const ls, FILE* const stream, char const* const file);
-/// clear and delete everything (do not hold on to bufsl tokens!)
+/// go back (at most) `count` tokens (only reason it'd do less is if it found the begining since last `lex_entry`)
+void lex_rewind(lex_state* const ls, size_t const count);
+/// clear and delete everything (do not hold on to tokens!)
 void lex_free(lex_state* const ls);
 /// compute a preprocessor expression
-long lex_eval(lex_state const* const ls, char const* const expr);
+long lex_eval(lex_state* const ls, char const* const expr);
 /// next token, move forward (your char* is at `ls->tokens.ptr+return`, don't hold on to the ptr but to the offset)
 size_t lext(lex_state* const ls);
 
-/// `"a\nb"` (including the quotes and the backslash) from `{0x61, 0x0a, 0x62}`
+/// make `"a\nb"` (including the quotes and the backslash) from `{0x61, 0x0a, 0x62}`
 size_t lex_strquo(char* const quoted, size_t const size, char const* const unquoted, size_t const length);
-/// `{0x61, 0x0a, 0x62}` from `"a\nb"` (including the quotes and the backslash)
+/// make `{0x61, 0x0a, 0x62}` from `"a\nb"` (including the quotes and the backslash)
 size_t lex_struqo(char* const unquoted, size_t const size, char const* const quoted);
 
-// -- user config
-
-#ifndef on_lex_comment
-#define on_lex_comment(ls, cstr) notif("INFO: comment: %s", cstr) //(void)(cstr)
-#endif
-
-#ifndef on_lex_sysinclude
-#define on_lex_sysinclude(ls, cstr) notif("INFO: sysinclude: %s", cstr) //(void)(cstr)
-#endif
-
-#ifndef on_lex_missinclude
-#define on_lex_missinclude(ls, cstr) notif("INFO: missinclude: %s", cstr) //(void)(cstr)
-#endif
-
-#ifndef on_lex_pperror
-#define on_lex_pperror(ls, cstr) notif("ERR: #error: %s", cstr) //(void)(cstr)
-#endif
-
-// -- implementation
-
 #define arry(...) struct { __VA_ARGS__* ptr; size_t len, cap; }
-#define frry(__a) (free((__a)->cap ? (__a)->ptr : NULL), (__a)->ptr = NULL, (__a)->len = (__a)->cap = 0)
-#define push(__a) ((__a)->len < (__a)->cap || (((__a)->cap || !(__a)->ptr) && ((__a)->ptr = realloc((__a)->ptr, ((__a)->cap+= (__a)->cap+8)*sizeof*(__a)->ptr))) ? (__a)->ptr+(__a)->len++ : (exit(EXIT_FAILURE), (__a)->ptr))
-#define grow(__a, __k, __n) _grow((char**)&(__a)->ptr, &(__a)->len, &(__a)->cap, sizeof*(__a)->ptr, (__k), (__n))
-#define last(__a) ((__a)->ptr+(__a)->len-1)
-#define each(__a) for (void* const _ptr = (__a)->ptr,* const _end = (__a)->ptr+(__a)->len; _end == (__a)->ptr ? (__a)->ptr = _ptr, 0 : 1; ++(__a)->ptr)
-static inline char* _grow(char** const ptr, size_t* const len, size_t* const cap, size_t const s, size_t const k, size_t const n) {
-    size_t const nlen = *len+n;
-    if (*cap < nlen && !(cap && (*ptr = realloc(*ptr, (*cap = nlen)*s)))) exit(EXIT_FAILURE);
-    if (k < *len) memmove(*ptr+(k+n)*s, *ptr+k*s, (*len-k)*s);
-    return *len = nlen, *ptr+k*s;
-}
-
-#define _HERE_STR(__ln) #__ln
-#define _HERE_XSTR(__ln) _HERE_STR(__ln)
-#define HERE "(" __FILE__ ":" _HERE_XSTR(__LINE__) ") "
-#define notif(...) (fprintf(stderr, HERE __VA_ARGS__), fputc('\n', stderr))
 
 struct lex_state {
     arry(struct lex_macro {
@@ -76,15 +81,56 @@ struct lex_state {
     arry(struct lex_source {
         FILE* stream;
         size_t file; // in ls->work
-        size_t line;
+        size_t line; // 1 based
     }) sources;
     char gotc; // private
+    char const* cstream; // (essentially) private
 
     arry(char) work; // (mostly) private
 
-    size_t ahead;
+    size_t ahead; // (preferably) private
     arry(char) tokens; // \0 \0 <token1> \0 <token2> \0 ... you can look back all you want, but do not interpret anything that's ahead
 };
+
+#ifdef LEXER_H_IMPLEMENTATION
+
+#define frry(__a) (free((__a)->cap ? (__a)->ptr : NULL), (__a)->ptr = NULL, (__a)->len = (__a)->cap = 0)
+#define push(__a) ((__a)->len < (__a)->cap || (((__a)->cap || !(__a)->ptr) && ((__a)->ptr = realloc((__a)->ptr, ((__a)->cap+= (__a)->cap+8)*sizeof*(__a)->ptr))) ? (__a)->ptr+(__a)->len++ : (exit(EXIT_FAILURE), (__a)->ptr))
+#define grow(__a, __k, __n) _lex_arrygrow((char**)&(__a)->ptr, &(__a)->len, &(__a)->cap, sizeof*(__a)->ptr, (__k), (__n))
+#define last(__a) ((__a)->ptr+(__a)->len-1)
+#define each(__a) for (void* const _ptr = (__a)->ptr,* const _end = (__a)->ptr+(__a)->len; _end == (__a)->ptr ? (__a)->ptr = _ptr, 0 : 1; ++(__a)->ptr)
+static char* _lex_arrygrow(char** const ptr, size_t* const len, size_t* const cap, size_t const s, size_t const k, size_t const n) {
+    size_t const nlen = *len+n;
+    if (*cap < nlen && !(cap && (*ptr = realloc(*ptr, (*cap = nlen)*s)))) exit(EXIT_FAILURE);
+    if (k < *len) memmove(*ptr+(k+n)*s, *ptr+k*s, (*len-k)*s);
+    return *len = nlen, *ptr+k*s;
+}
+
+// everything between / * and * / or // and newline, 0-terminated, no newline
+#ifndef on_lex_comment
+#define on_lex_comment(ls, cstr) (void)cstr
+#endif
+// the text given in <>, 0-terminated
+#ifndef on_lex_sysinclude
+#define on_lex_sysinclude(ls, cstr) (void)cstr
+#endif
+// the text given in "", 0-terminated
+#ifndef on_lex_missinclude
+#define on_lex_missinclude(ls, cstr) (void)cstr
+#endif
+// everything after the '#' exclusive, 0-terminated, no newline
+#ifndef on_lex_unknowndir
+#define on_lex_unknowndir(ls, cstr) (void)cstr
+#endif
+// everything after the 'error' exclusive, 0-terminated, no newline
+#ifndef on_lex_preprocerr
+#define on_lex_preprocerr(ls, cstr) (void)cstr
+#endif
+
+#define _HERE_STR(__ln) #__ln
+#define _HERE_XSTR(__ln) _HERE_STR(__ln)
+#define HERE "(" __FILE__ ":" _HERE_XSTR(__LINE__) ") "
+#define notif(...) (fprintf(stderr, HERE __VA_ARGS__), fputc('\n', stderr))
 
 static void _lex_dump(lex_state* const ls, FILE* const strm) {
 #   define wstr(at) (ls->work.ptr+(at))
@@ -109,6 +155,8 @@ static void _lex_dump(lex_state* const ls, FILE* const strm) {
     fprintf(strm, "    sources [\n");
     each (&ls->sources) fprintf(strm, "        %s:%zu\n", wstr(ls->sources.ptr->file), ls->sources.ptr->line);
     fprintf(strm, "    ]\n");
+    fprintf(strm, "    gotc= 0x%02hhX\n", ls->gotc);
+    fprintf(strm, "    cstream= %s@\n", ls->cstream);
     fprintf(strm, "    work\n");
     for (size_t k = 0; k < ls->work.len; k+= strlen(wstr(k))+1)
         fprintf(strm, "%s@", wstr(k));
@@ -122,163 +170,8 @@ static void _lex_dump(lex_state* const ls, FILE* const strm) {
 #   undef wstr
 }
 
-void lex_define(lex_state* const ls, char const* const name, char const* const value) {
-    size_t const name_at = ls->work.len, name_len = strcspn(name, "(");
-    memcpy(grow(&ls->work, ls->work.len, name_len+1), name, name_len);
-    ls->work.ptr[ls->work.len-1] = '\0';
-
-    int params = -1;
-    if ('(' == name[name_len]) {
-        ++params;
-        notif("NIY: lex_define with function-like macro");
-    }
-
-    notif("NIY: tokens from string (in lex_defined)");
-    size_t const value_at = ls->work.len;
-    strcpy(grow(&ls->work, ls->work.len, strlen(value)+1), value);
-
-    *push(&ls->macros) = (struct lex_macro){
-        .name= name_at,
-        .value= value_at,
-        .params= params,
-    };
-}
-
-void lex_undef(lex_state* const ls, char const* const name) {
-    for (size_t k = 0; k < ls->macros.len; ++k) if (!strcmp(name, ls->work.ptr+ls->macros.ptr[k].name)) {
-        grow(&ls->macros, k+1, -1);
-        break;
-    }
-}
-
-void lex_include(lex_state* const ls, char const* const path) {
-    *push(&ls->paths) = path;
-}
-
-void lex_entry(lex_state* const ls, FILE* const stream, char const* const file) {
-    size_t const file_at = ls->work.len;
-    strcpy(grow(&ls->work, ls->work.len, strlen(file)+1), file);
-    *push(&ls->sources) = (struct lex_source){.stream= stream, .file= file_at, .line= 1};
-    *push(&ls->tokens) = '\0';
-    *push(&ls->tokens) = '\0';
-}
-
-long lex_eval(lex_state const* const ls, char const* const expr) {
-    (void)ls;
-    (void)expr;
-    notif("NIY: tokens from string (in lex_eval)");
-    return 0;
-}
-
-void lex_free(lex_state* const ls) {
-    frry(&ls->macros);
-    frry(&ls->paths);
-    each (&ls->sources) if (stdin != ls->sources.ptr->stream) fclose(ls->sources.ptr->stream);
-    frry(&ls->sources);
-    frry(&ls->work);
-    frry(&ls->tokens);
-}
-
-size_t lex_strquo(char* const quoted, size_t const size, char const* const unquoted, size_t const length) {
-    if (size <3 +length) return 0;
-    size_t d = 1, s = 0;
-    quoted[0] = '"';
-
-    while (d < size && s < length) {
-        char c = unquoted[s++];
-
-        if (' ' <= c && c <= '~' && !strchr("'\"?\\", c)) quoted[d++] = c;
-        else {
-            switch(c) {
-            case '\'': c ='\''; break;
-            case '\"': c = '"'; break;
-            case '\?': c = '?'; break;
-            case '\\': c ='\\'; break;
-            case '\a': c = 'a'; break;
-            case '\b': c = 'b'; break;
-            case '\f': c = 'f'; break;
-            case '\n': c = 'n'; break;
-            case '\r': c = 'r'; break;
-            case '\t': c = 't'; break;
-            case '\v': c = 'v'; break;
-            case '\0': c = '0'; break;
-
-            default:
-                if (d+4 >= size) return 0;
-                quoted[d++] = '\\';
-                quoted[d++] = 'x';
-                quoted[d++] = "0123456789abcdef"[c>>4 & 15];
-                quoted[d++] = "0123456789abcdef"[c & 15];
-                continue;
-            }
-
-            if (d+2 >= size) return 0;
-            quoted[d++] = '\\';
-            quoted[d++] = c;
-        }
-    }
-
-    if (d+2 >= size) return 0;
-    quoted[d++] = '"';
-    quoted[d] = '\0';
-    return d;
-}
-
-size_t lex_struqo(char* const unquoted, size_t const size, char const* const quoted) {
-    char const c0 = quoted[0];
-    size_t d = 0, s = 1;
-
-    while (d < size && c0 != quoted[s]) {
-        char c = quoted[s++];
-        if (!c) return 0;
-
-        if ('\\' != c) unquoted[d++] = c;
-        else switch (c = quoted[s++]) {
-        case'\'': unquoted[d++] = '\''; break;
-        case '"': unquoted[d++] = '\"'; break;
-        case '?': unquoted[d++] = '\?'; break;
-        case'\\': unquoted[d++] = '\\'; break;
-        case 'a': unquoted[d++] = '\a'; break;
-        case 'b': unquoted[d++] = '\b'; break;
-        case 'f': unquoted[d++] = '\f'; break;
-        case 'n': unquoted[d++] = '\n'; break;
-        case 'r': unquoted[d++] = '\r'; break;
-        case 't': unquoted[d++] = '\t'; break;
-        case 'v': unquoted[d++] = '\v'; break;
-
-            long unsigned r;
-
-        case 'x':
-            r = 0;
-            static char const dgts[] = "0123456789abcdef";
-            char const* v = strchr(dgts, quoted[s]|32);
-            do r = (r<<4) + (v-dgts);
-            while ((v = strchr(dgts, quoted[++s]|32)));
-            unquoted[d++] = r;
-            break;
-
-        case 'u':
-        case 'U':
-            notif("NIY: 'Universal character names' (Unicode)");
-            return 0;
-            break;
-
-        default:
-            if ('0' <= c && c <= '7') {
-                r = 0;
-                do r = (r<<3) + (c-'0');
-                while (c = quoted[s++], '0' <= c && c <= '7');
-                --s;
-                unquoted[d++] = r;
-            } else unquoted[d++] = c;
-        }
-    }
-
-    return quoted[s+1] ? 0 : d;
-}
-
 #define curr  (ls->sources.ptr+ls->sources.len-1)
-#define endd  (feof(curr->stream) || ferror(curr->stream))
+#define endd  (ls->cstream?! *ls->cstream : feof(curr->stream) || ferror(curr->stream))
 
 #define isnum(__c) ('0' <= (__c) && (__c) <= '9')
 #define isidh(__c) (('a' <= ((__c)|32) && ((__c)|32) <= 'z') || '_' == (__c))
@@ -302,6 +195,11 @@ static void _lex_comment(lex_state* const ls) {
 }
 
 static char _lex_getc(lex_state* const ls) {
+    if (ls->cstream) {
+        char const c = *ls->cstream++;
+        return c ? c : '\n';
+    }
+
     char c = ls->gotc ? ls->gotc : fgetc(curr->stream);
     ls->gotc = '\0';
     curr->line+= '\n' == c;
@@ -316,15 +214,15 @@ static char _lex_getc(lex_state* const ls) {
     case2('/', '*', (
         _lex_comment(ls),
         *push(&ls->work) = '\0',
-        (on_lex_comment(ls, ls->work.ptr+comment_at)),
         ls->work.len = comment_at,
+        (on_lex_comment(ls, (ls->work.ptr+comment_at))),
         ' '
     ));
     case2('/', '/', (
         _lex_getdelim(ls, '\n'),
         *push(&ls->work) = '\0',
-        (on_lex_comment(ls, ls->work.ptr+comment_at)),
         ls->work.len = comment_at,
+        (on_lex_comment(ls, (ls->work.ptr+comment_at))),
         '\n'
     ));
 #   undef case2
@@ -332,6 +230,11 @@ static char _lex_getc(lex_state* const ls) {
 }
 
 static void _lex_ungetc(lex_state* const ls, char const c) {
+    if (ls->cstream) {
+        --ls->cstream;
+        return;
+    }
+
     if (ls->gotc) notif("ERR: double ungetc: %c, %c", ls->gotc, c), exit(1);
     ls->gotc = c;
     curr->line-= '\n' == c;
@@ -465,6 +368,7 @@ static size_t _lex_ahead(lex_state* const ls) {
 }
 
 static long _lex_eval(lex_state* const ls) {
+    notif("NIY: _lex_eval");
     char c;
     do {
         while (strchr(" \t", c = _lex_getc(ls)));
@@ -533,11 +437,11 @@ static void _lex_directive(lex_state* const ls) {
     while (isidt(c));
     _lex_ungetc(ls, ls->work.ptr[ls->work.len-1]);
     ls->work.ptr[ls->work.len-1] = '\0';
-
     ls->work.len = dir_at;
+
     while (strchr(" \t", next()));
 
-#   define diris(__l) (!strcmp(__l, ls->work.ptr+dir_at)) //(strlen(__l) == dir_len && !memcmp(__l, ls->work.ptr+dir_at, strlen(__l)))
+#   define diris(__l) (!strcmp(__l, ls->work.ptr+dir_at))
     if (0) ;
 
     else if (diris("error")) {
@@ -546,10 +450,10 @@ static void _lex_directive(lex_state* const ls) {
         _lex_getdelim(ls, '\n');
         *push(&ls->work) = '\0';
         ls->work.len = dir_at;
-        on_lex_pperror(ls, ls->work.ptr+message_at);
+        on_lex_preprocerr(ls, (ls->work.ptr+message_at));
 
         fclose(curr->stream);
-        //--ls->sources.len;
+        --ls->sources.len;
     }
 
     else if (diris("include")) {
@@ -583,7 +487,7 @@ static void _lex_directive(lex_state* const ls) {
                 }
 
                 if (k >= ls->paths.len) {
-                    on_lex_missinclude(ls, ls->work.ptr+path_at);
+                    on_lex_missinclude(ls, (ls->work.ptr+path_at));
                     break;
                 }
                 strcpy(file, ls->paths.ptr[k++]);
@@ -595,7 +499,7 @@ static void _lex_directive(lex_state* const ls) {
             ls->work.ptr[ls->work.len-1] = '\0';
             _lex_getdelim(ls, '\n');
             ls->work.len = dir_at;
-            on_lex_sysinclude(ls, ls->work.ptr+path_at);
+            on_lex_sysinclude(ls, (ls->work.ptr+path_at));
         }
 
         else notif("NIY: expand preprocessor identifier for file path");
@@ -613,7 +517,7 @@ static void _lex_directive(lex_state* const ls) {
             ++params;
             while (strchr(" \t", next()));
 
-            while (')' != c) {
+            while (')' != c && !endd) {
                 *push(&ls->work) = c;
                 do accu();
                 while (isidt(c) || '.' == c);
@@ -628,8 +532,7 @@ static void _lex_directive(lex_state* const ls) {
 
         size_t const value_at = ls->work.len;
         size_t length = 0;
-        if ('\n' == c) *push(&ls->work) = '\0';
-        else do {
+        if ('\n' != c) do {
             while (strchr(" \t", next()));
             if ('\n' == c) break;
             _lex_ungetc(ls, c);
@@ -682,7 +585,7 @@ static void _lex_directive(lex_state* const ls) {
             ls->work.ptr[ls->work.len-1] = '\0';
             ls->work.len = dir_at;
 
-            for (size_t k = 0; k < ls->macros.len; k++) if (!strcmp(ls->work.ptr+ls->macros.ptr[k].name, ls->work.ptr+name_at)) {
+            for (size_t k = 0; k < ls->macros.len; ++k) if (!strcmp(ls->work.ptr+ls->macros.ptr[k].name, ls->work.ptr+name_at)) {
                 cond = 1;
                 break;
             }
@@ -703,9 +606,13 @@ static void _lex_directive(lex_state* const ls) {
     }
 
     else {
-        notif("WARN: unknown or unhandled preprocessor directive #%s", ls->work.ptr+dir_at);
+        ls->work.len+= strlen(ls->work.ptr+dir_at)+1;
+        ls->work.ptr[ls->work.len-1] = ' ';
+        *push(&ls->work) = c;
         _lex_getdelim(ls, '\n');
+        *push(&ls->work) = '\0';
         ls->work.len = dir_at;
+        on_lex_unknowndir(ls, (ls->work.ptr+dir_at));
     }
 
 #   undef diris
@@ -714,7 +621,111 @@ static void _lex_directive(lex_state* const ls) {
 #   undef next
 }
 
+void lex_define(lex_state* const ls, char const* const name, char const* const value) {
+    size_t const name_at = ls->work.len, name_len = strcspn(name, "(");
+    memcpy(grow(&ls->work, ls->work.len, name_len+1), name, name_len);
+    ls->work.ptr[ls->work.len-1] = '\0';
+
+    int params = -1;
+    if ('(' == name[name_len]) {
+        size_t k = name_len;
+        ++params;
+        while (strchr(" \t", name[++k]));
+
+        while (')' != name[k] && name[k]) {
+            do *push(&ls->work) = name[k++];
+            while (isidt(name[k]) || '.' == name[k]);
+            *push(&ls->work) = '\0';
+
+            ++params;
+            if (')' == name[k]) break;
+            while (strchr(" \t", name[++k]));
+            if (',' == name[k]) while (strchr(" \t", name[++k]));
+        }
+    }
+
+    ls->cstream = value;
+    char c;
+
+    size_t const value_at = ls->work.len;
+    size_t length = 0;
+    if ('\n' != *value) do {
+        while (strchr(" \t", c = _lex_getc(ls)));
+        if ('\n' == c) break;
+        _lex_ungetc(ls, c);
+
+        size_t const plen = ls->tokens.len, token_at = _lex_simple(ls);
+        ls->tokens.len = plen;
+
+        size_t const toklen = strlen(ls->tokens.ptr+token_at);
+        length+= toklen+1;
+        strcpy(grow(&ls->work, ls->work.len, toklen+1), ls->tokens.ptr+token_at);
+    } while (*ls->cstream);
+
+    ls->cstream = NULL;
+
+    struct lex_macro* found = NULL;
+    for (size_t k = 0; k < ls->macros.len; ++k) if (!strcmp(ls->work.ptr+ls->macros.ptr[k].name, ls->work.ptr+name_at)) {
+        found = ls->macros.ptr+k;
+        break;
+    }
+    *(found ? found : push(&ls->macros)) = (struct lex_macro){
+        .name= name_at,
+        .value= value_at,
+        .length= length,
+        .params= params,
+    };
+}
+
+void lex_undef(lex_state* const ls, char const* const name) {
+    for (size_t k = 0; k < ls->macros.len; ++k) if (!strcmp(name, ls->work.ptr+ls->macros.ptr[k].name)) {
+        grow(&ls->macros, k+1, -1);
+        break;
+    }
+}
+
+void lex_incdir(lex_state* const ls, char const* const path) {
+    *push(&ls->paths) = path;
+}
+
+void lex_entry(lex_state* const ls, FILE* const stream, char const* const file) {
+    size_t const file_at = ls->work.len;
+    strcpy(grow(&ls->work, ls->work.len, strlen(file)+1), file);
+    *push(&ls->sources) = (struct lex_source){.stream= stream, .file= file_at, .line= 1};
+    *push(&ls->tokens) = '\0';
+    *push(&ls->tokens) = '\0';
+}
+
+void lex_rewind(lex_state* const ls, size_t const count) {
+    for (size_t k = 0; k < count; ++k) {
+        size_t n = ls->tokens.len - ls->ahead - 2;
+        if (!ls->tokens.ptr[n]) break;
+        while (--n && !ls->tokens.ptr[n]);
+    }
+}
+
+void lex_free(lex_state* const ls) {
+    frry(&ls->macros);
+    frry(&ls->paths);
+    each (&ls->sources) if (stdin != ls->sources.ptr->stream) fclose(ls->sources.ptr->stream);
+    frry(&ls->sources);
+    frry(&ls->work);
+    frry(&ls->tokens);
+}
+
+long lex_eval(lex_state* const ls, char const* const expr) {
+    ls->cstream = expr;
+    long r = _lex_eval(ls);
+    ls->cstream = NULL;
+    return r;
+}
+
 size_t lext(lex_state* const ls) {
+    if (!ls->sources.len || endd) {
+        *push(&ls->tokens) = '\0';
+        return ls->tokens.len-1;
+    }
+
     if (!ls->ahead) {
         size_t const pline = curr->line;
 
@@ -778,6 +789,104 @@ size_t lext(lex_state* const ls) {
     return r;
 }
 
+size_t lex_strquo(char* const quoted, size_t const size, char const* const unquoted, size_t const length) {
+    if (size <3 +length) return 0;
+    size_t d = 1, s = 0;
+    quoted[0] = '"';
+
+    while (d < size && s < length) {
+        char c = unquoted[s++];
+
+        if (' ' <= c && c <= '~' && !strchr("'\"?\\", c)) quoted[d++] = c;
+        else {
+            switch(c) {
+            case '\'': c ='\''; break;
+            case '\"': c = '"'; break;
+            case '\?': c = '?'; break;
+            case '\\': c ='\\'; break;
+            case '\a': c = 'a'; break;
+            case '\b': c = 'b'; break;
+            case '\f': c = 'f'; break;
+            case '\n': c = 'n'; break;
+            case '\r': c = 'r'; break;
+            case '\t': c = 't'; break;
+            case '\v': c = 'v'; break;
+            case '\0': c = '0'; break;
+
+            default:
+                if (d+4 >= size) return 0;
+                quoted[d++] = '\\';
+                quoted[d++] = 'x';
+                quoted[d++] = "0123456789abcdef"[c>>4 & 15];
+                quoted[d++] = "0123456789abcdef"[c & 15];
+                continue;
+            }
+
+            if (d+2 >= size) return 0;
+            quoted[d++] = '\\';
+            quoted[d++] = c;
+        }
+    }
+
+    if (d+2 >= size) return 0;
+    quoted[d++] = '"';
+    quoted[d] = '\0';
+    return d;
+}
+
+size_t lex_struqo(char* const unquoted, size_t const size, char const* const quoted) {
+    char const c0 = quoted[0];
+    size_t d = 0, s = 1;
+
+    while (d < size && c0 != quoted[s]) {
+        char c = quoted[s++];
+        if (!c) return 0;
+
+        if ('\\' != c) unquoted[d++] = c;
+        else switch (c = quoted[s++]) {
+        case'\'': unquoted[d++] = '\''; break;
+        case '"': unquoted[d++] = '\"'; break;
+        case '?': unquoted[d++] = '\?'; break;
+        case'\\': unquoted[d++] = '\\'; break;
+        case 'a': unquoted[d++] = '\a'; break;
+        case 'b': unquoted[d++] = '\b'; break;
+        case 'f': unquoted[d++] = '\f'; break;
+        case 'n': unquoted[d++] = '\n'; break;
+        case 'r': unquoted[d++] = '\r'; break;
+        case 't': unquoted[d++] = '\t'; break;
+        case 'v': unquoted[d++] = '\v'; break;
+
+            long unsigned r;
+
+        case 'x':
+            r = 0;
+            static char const dgts[] = "0123456789abcdef";
+            char const* v = strchr(dgts, quoted[s]|32);
+            do r = (r<<4) + (v-dgts);
+            while ((v = strchr(dgts, quoted[++s]|32)));
+            unquoted[d++] = r;
+            break;
+
+        case 'u':
+        case 'U':
+            notif("NIY: 'Universal character names' (Unicode)");
+            return 0;
+            break;
+
+        default:
+            if ('0' <= c && c <= '7') {
+                r = 0;
+                do r = (r<<3) + (c-'0');
+                while (c = quoted[s++], '0' <= c && c <= '7');
+                --s;
+                unquoted[d++] = r;
+            } else unquoted[d++] = c;
+        }
+    }
+
+    return quoted[s+1] ? 0 : d;
+}
+
 #undef isid_t
 #undef isid_h
 #undef isnum
@@ -785,20 +894,30 @@ size_t lext(lex_state* const ls) {
 #undef endd
 #undef curr
 
-// -- testing
-
+#ifdef LEXER_H_SIMPLE_CPP
 int main(int argc, char** argv) {
-    --argc, argv++;
+    char const* const prog = *(--argc, argv++);
 
     FILE* stream = stdin;
     char const* file = "<stdin>";
 
-    if (argc && strcmp("-", *argv) && !(stream = fopen(file = *argv, "r"))) {
-        printf("Could not read file %s\n", *argv);
-        return EXIT_FAILURE;
+    lex_state* const ls = &(lex_state){0};
+
+    for (; argc--; ++argv) {
+        if ('-' == **argv) switch ((*argv)[1]) {
+        default:  printf("Unknown flag -%c\n", (*argv)[1]);     return EXIT_FAILURE;
+        case 'h': printf("Usage: %s [-D..|-U..|-I..]\n", prog); return EXIT_FAILURE;
+            char* eq;
+        case 'D': lex_define(ls, *argv+2, (eq = strchr(*argv, '=')) ? *eq = '\0', eq+1 : "1"); break;
+        case 'U': lex_undef(ls, *argv+2);  break;
+        case 'I': lex_incdir(ls, *argv+2); break;
+        case'\0': break;
+        } else if (!(stream = fopen(file = *argv, "r"))) {
+            printf("Could not read file %s\n", *argv);
+            return EXIT_FAILURE;
+        }
     }
 
-    lex_state* const ls = &(lex_state){0};
     lex_entry(ls, stream, file);
 
     size_t k;
@@ -812,10 +931,10 @@ int main(int argc, char** argv) {
                 ls->tokens.ptr+k);
     }
 
-    //_lex_dump(ls, stdout);
     lex_free(ls);
     return EXIT_SUCCESS;
 }
+#endif // LEXER_H_SIMPLE_CPP
 
 #undef notif
 #undef HERE
@@ -827,4 +946,9 @@ int main(int argc, char** argv) {
 #undef grow
 #undef push
 #undef frry
+
+#endif // LEXER_H_IMPLEMENTATION
+
 #undef arry
+
+#endif // LEXER_H
