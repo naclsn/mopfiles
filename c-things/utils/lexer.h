@@ -27,7 +27,7 @@
 /// - on_lex_unknowndir
 /// - on_lex_preprocerr
 
-// TODO: remove `notif`s
+// TODO: function-like macros
 
 #ifndef LEXER_H
 #define LEXER_H
@@ -84,6 +84,7 @@ struct lex_state {
         size_t line; // 1 based
     }) sources;
     char gotc; // private
+    int nlend; // private
     char const* cstream; // (essentially) private
 
     arry(char) work; // (mostly) private
@@ -156,6 +157,7 @@ static void _lex_dump(lex_state* const ls, FILE* const strm) {
     each (&ls->sources) fprintf(strm, "        %s:%zu\n", wstr(ls->sources.ptr->file), ls->sources.ptr->line);
     fprintf(strm, "    ]\n");
     fprintf(strm, "    gotc= 0x%02hhX\n", ls->gotc);
+    fprintf(strm, "    gotc= %s\n", ls->nlend ? "true" : "false");
     fprintf(strm, "    cstream= %s@\n", ls->cstream);
     fprintf(strm, "    work\n");
     for (size_t k = 0; k < ls->work.len; k+= strlen(wstr(k))+1)
@@ -177,6 +179,9 @@ static void _lex_dump(lex_state* const ls, FILE* const strm) {
 #define isidh(__c) (('a' <= ((__c)|32) && ((__c)|32) <= 'z') || '_' == (__c))
 #define isidt(__c) (isidh((__c)) || isnum((__c)))
 
+#define blankchrs " \t\v\f"
+#define nlchrs "\r\n"
+
 static char _lex_getc(lex_state* const ls);
 
 static void _lex_getdelim(lex_state* const ls, char const d) {
@@ -197,7 +202,7 @@ static void _lex_comment(lex_state* const ls) {
 static char _lex_getc(lex_state* const ls) {
     if (ls->cstream) {
         char const c = *ls->cstream++;
-        return c ? c : '\n';
+        return c ? c : EOF;
     }
 
     char c = ls->gotc ? ls->gotc : fgetc(curr->stream);
@@ -235,7 +240,6 @@ static void _lex_ungetc(lex_state* const ls, char const c) {
         return;
     }
 
-    if (ls->gotc) notif("ERR: double ungetc: %c, %c", ls->gotc, c), exit(1);
     ls->gotc = c;
     curr->line-= '\n' == c;
 }
@@ -326,10 +330,13 @@ static size_t _lex_simple(lex_state* const ls) {
             return token_at;
         }
 
+        // yyy: i think this tad approximative idk
         if (c0 < ' ' || '~' < c0) {
             ls->tokens.ptr[ls->tokens.len-1] = '\0';
 
-            while (strchr(" \t\n", c = _lex_getc(ls)));
+            char const* const blanks = ls->nlend ? blankchrs : nlchrs blankchrs;
+            while (strchr(blanks, c = _lex_getc(ls)));
+            if ('\n' == c) return token_at;
             _lex_ungetc(ls, c);
 
             return endd ? token_at : _lex_simple(ls);
@@ -351,9 +358,7 @@ static size_t _lex_ahead(lex_state* const ls) {
     if (0x1a == ls->tokens.ptr[token_at]) {
         char const* const name = ls->tokens.ptr+token_at+1;
         ls->ahead-= toklen+1;
-        notif("INFO: end expansion of '%s' (ahead: %zu)", name, ls->ahead);
         for (size_t k = 0; k < ls->macros.len; ++k) if (!strcmp(ls->work.ptr+ls->macros.ptr[k].name, name)) {
-            notif("      yes");
             ls->macros.ptr[k].marked = 0;
             grow(&ls->tokens, token_at+toklen+1, -toklen-1);
             return lext(ls);
@@ -367,23 +372,112 @@ static size_t _lex_ahead(lex_state* const ls) {
     return token_at;
 }
 
-static long _lex_eval(lex_state* const ls) {
-    notif("NIY: _lex_eval");
-    char c;
-    do {
-        while (strchr(" \t", c = _lex_getc(ls)));
-        if ('\n' == c) break;
-        _lex_ungetc(ls, c);
+static long _lex_eval_zero(lex_state* const ls);
 
-        size_t const plen = ls->tokens.len, token_at = _lex_simple(ls);
-        ls->tokens.len = plen;
+static long _lex_eval_one(lex_state* const ls) {
+    size_t const token_at = lext(ls);
+    char const* const token = ls->tokens.ptr+token_at;
 
-        char const* const token = ls->tokens.ptr+token_at;
-        long const value = atol(token);
-        notif("if token: '%s' -> %ld", token, value);
-        if (value) return 1;
-    } while (endd);
+    switch (*token) {
+        union { long l; char b[sizeof(long)]; } r;
+    case'\'': return r.l = 0, lex_struqo(r.b, sizeof r.b, token), r.l; // xxx: little endian
+    case '+': return +_lex_eval_one(ls);
+    case '-': return -_lex_eval_one(ls);
+    case '(': return (_lex_eval_zero(ls));
+    }
+    if (isnum(*token)) return atol(token);
+    if (!strcmp("defined", token)) {
+        size_t name_at = lext(ls);
+        int par = 0, found = 0;
+        if ('(' == ls->tokens.ptr[name_at]) name_at = lext(ls), par = 1;
+        for (size_t k = 0; k < ls->macros.len; ++k) if (!strcmp(ls->work.ptr+ls->macros.ptr[k].name, ls->tokens.ptr+name_at)) {
+            found = 1;
+            break;
+        }
+        if (par) lext(ls);
+        return found;
+    }
+
     return 0;
+}
+
+static long _lex_eval_two(lex_state* const ls, long const lhs, size_t const op_at) {
+    long rhs = _lex_eval_one(ls);
+    size_t const nop_at = lext(ls);
+
+#   define hash2(a, b) (((a)|(b)<<8)%35)
+#   define hash1(op) (((op)[0]|(op)[1]<<8)%35)
+    int const hop = hash1(ls->tokens.ptr+op_at);
+    int then = 0;
+    if (ls->tokens.ptr[nop_at] && ')' != ls->tokens.ptr[nop_at]) {
+        static char const prec[] = {
+            [hash2('|','|')]=   0,
+            [hash2('&','&')]=   1,
+            [hash2('|','\0')]=  2,
+            [hash2('^','\0')]=  3,
+            [hash2('&','\0')]=  4,
+            [hash2('=','=')]=   5,
+            [hash2('!','=')]=   6,
+            [hash2('<','\0')]=  7,
+            [hash2('>','\0')]=  8,
+            [hash2('<','=')]=   9,
+            [hash2('>','=')]=  10,
+            [hash2('<','<')]=  11,
+            [hash2('>','>')]=  12,
+            [hash2('+','\0')]= 13,
+            [hash2('-','\0')]= 14,
+            [hash2('*','\0')]= 15,
+            [hash2('/','\0')]= 16,
+            [hash2('%','\0')]= 17,
+        };
+        if (prec[hop] < prec[hash1(ls->tokens.ptr+nop_at)])
+            rhs = _lex_eval_two(ls, rhs, nop_at);
+        else then = 1;
+    }
+#   undef hash1
+
+    long r = lhs;
+    switch (hop) {
+    case hash2('|','|'):  r = lhs || rhs; break;
+    case hash2('&','&'):  r = lhs && rhs; break;
+    case hash2('|','\0'): r = lhs |  rhs; break;
+    case hash2('^','\0'): r = lhs ^  rhs; break;
+    case hash2('&','\0'): r = lhs &  rhs; break;
+    case hash2('=','='):  r = lhs == rhs; break;
+    case hash2('!','='):  r = lhs != rhs; break;
+    case hash2('<','\0'): r = lhs <  rhs; break;
+    case hash2('>','\0'): r = lhs >  rhs; break;
+    case hash2('<','='):  r = lhs <= rhs; break;
+    case hash2('>','='):  r = lhs >= rhs; break;
+    case hash2('<','<'):  r = lhs << rhs; break;
+    case hash2('>','>'):  r = lhs >> rhs; break;
+    case hash2('+','\0'): r = lhs +  rhs; break;
+    case hash2('-','\0'): r = lhs -  rhs; break;
+    case hash2('*','\0'): r = lhs *  rhs; break;
+    case hash2('/','\0'): r = lhs /  rhs; break;
+    case hash2('%','\0'): r = lhs %  rhs; break;
+    }
+#   undef hash2
+
+    return then ? _lex_eval_two(ls, r, nop_at) : r;
+}
+
+static long _lex_eval_zero(lex_state* const ls) {
+    long const lhs = _lex_eval_one(ls);
+    size_t const op_at = lext(ls);
+
+    return ls->tokens.ptr[op_at] ? _lex_eval_two(ls, lhs, op_at) : lhs;
+}
+
+static long _lex_eval(lex_state* const ls) {
+    size_t const plen = ls->tokens.len;
+    ls->nlend = 1;
+
+    long const r = _lex_eval_zero(ls);
+
+    ls->nlend = 0;
+    ls->tokens.len = plen;
+    return r;
 }
 
 static void _lex_skipblock(lex_state* const ls, int const can_else) {
@@ -393,16 +487,13 @@ static void _lex_skipblock(lex_state* const ls, int const can_else) {
         size_t const dir_at = ls->work.len;
 
         char c;
-        while (strchr(" \t", c = _lex_getc(ls)));
+        while (strchr(blankchrs, c = _lex_getc(ls)));
 
         if ('#' == c) {
             do *push(&ls->work) = c = _lex_getc(ls);
             while (isidt(c));
             _lex_ungetc(ls, ls->work.ptr[ls->work.len-1]);
             ls->work.ptr[ls->work.len-1] = '\0';
-
-            notif("INFO: directive in disabled preproc block: '%s'", ls->work.ptr+dir_at);
-            notif("      (depth: %zu)", depth);
 
 #           define diris(__l) (!strcmp(__l, ls->work.ptr+dir_at))
 
@@ -423,13 +514,13 @@ static void _lex_skipblock(lex_state* const ls, int const can_else) {
 
 static void _lex_directive(lex_state* const ls) {
     char c;
-
 #   define next() (c = _lex_getc(ls))
 #   define accu() (*push(&ls->work) = next())
 
     size_t const dir_at = ls->work.len;
 
-    while (strchr(" \t", next()));
+    next(); // #
+    while (strchr(blankchrs, next()));
     if ('\n' == c) return;
     *push(&ls->work) = c;
 
@@ -439,15 +530,17 @@ static void _lex_directive(lex_state* const ls) {
     ls->work.ptr[ls->work.len-1] = '\0';
     ls->work.len = dir_at;
 
-    while (strchr(" \t", next()));
+    while (strchr(blankchrs, next()));
 
 #   define diris(__l) (!strcmp(__l, ls->work.ptr+dir_at))
     if (0) ;
 
     else if (diris("error")) {
         size_t const message_at = ls->work.len;
-        *push(&ls->work) = c;
-        _lex_getdelim(ls, '\n');
+        if ('\n' != c) {
+            *push(&ls->work) = c;
+            _lex_getdelim(ls, '\n');
+        }
         *push(&ls->work) = '\0';
         ls->work.len = dir_at;
         on_lex_preprocerr(ls, (ls->work.ptr+message_at));
@@ -515,7 +608,7 @@ static void _lex_directive(lex_state* const ls) {
         int params = -1;
         if ('(' == c) {
             ++params;
-            while (strchr(" \t", next()));
+            while (strchr(blankchrs, next()));
 
             while (')' != c && !endd) {
                 *push(&ls->work) = c;
@@ -525,25 +618,20 @@ static void _lex_directive(lex_state* const ls) {
 
                 ++params;
                 if (')' == c) break;
-                while (strchr(" \t", next()));
-                if (',' == c) while (strchr(" \t", next()));
+                while (strchr(blankchrs, next()));
+                if (',' == c) while (strchr(blankchrs, next()));
             }
         }
 
         size_t const value_at = ls->work.len;
         size_t length = 0;
-        if ('\n' != c) do {
-            while (strchr(" \t", next()));
-            if ('\n' == c) break;
-            _lex_ungetc(ls, c);
-
-            size_t const plen = ls->tokens.len, token_at = _lex_simple(ls);
-            ls->tokens.len = plen;
-
+        ls->nlend = 1;
+        if ('\n' != c) for (size_t token_at; token_at = lext(ls), ls->tokens.ptr[token_at];) {
             size_t const toklen = strlen(ls->tokens.ptr+token_at);
             length+= toklen+1;
             strcpy(grow(&ls->work, ls->work.len, toklen+1), ls->tokens.ptr+token_at);
-        } while (endd);
+        }
+        ls->nlend = 0;
 
         struct lex_macro* found = NULL;
         for (size_t k = 0; k < ls->macros.len; ++k) if (!strcmp(ls->work.ptr+ls->macros.ptr[k].name, ls->work.ptr+name_at)) {
@@ -563,7 +651,7 @@ static void _lex_directive(lex_state* const ls) {
 
         *push(&ls->work) = c;
         do accu();
-        while (!strchr(" \t\n\r", c));
+        while (!strchr(nlchrs blankchrs, c));
         ls->work.ptr[ls->work.len-1] = '\0';
         ls->work.len = dir_at;
 
@@ -574,14 +662,14 @@ static void _lex_directive(lex_state* const ls) {
     else if (diris("ifdef") || diris("ifndef") || diris("if")) {
         _lex_ungetc(ls, c);
 
-        int cond;
+        int cond = 0;
         if ('\0' == ls->work.ptr[dir_at+2]) cond = !!_lex_eval(ls);
         else {
             size_t const name_at = ls->work.len;
             int const n = 'n' == ls->work.ptr[dir_at+2];
 
             do accu();
-            while (!strchr(" \t\n\r", c));
+            while (!strchr(nlchrs blankchrs, c));
             ls->work.ptr[ls->work.len-1] = '\0';
             ls->work.len = dir_at;
 
@@ -601,16 +689,18 @@ static void _lex_directive(lex_state* const ls) {
     }
 
     else if (diris("endif")) {
-        _lex_getdelim(ls, '\n');
+        if ('\n' != c) _lex_getdelim(ls, '\n');
         ls->work.len = dir_at;
     }
 
     else {
         ls->work.len+= strlen(ls->work.ptr+dir_at)+1;
-        ls->work.ptr[ls->work.len-1] = ' ';
-        *push(&ls->work) = c;
-        _lex_getdelim(ls, '\n');
-        *push(&ls->work) = '\0';
+        if ('\n' != c) {
+            ls->work.ptr[ls->work.len-1] = ' ';
+            *push(&ls->work) = c;
+            _lex_getdelim(ls, '\n');
+            *push(&ls->work) = '\0';
+        } else ls->work.ptr[ls->work.len-1] = '\0';
         ls->work.len = dir_at;
         on_lex_unknowndir(ls, (ls->work.ptr+dir_at));
     }
@@ -630,7 +720,7 @@ void lex_define(lex_state* const ls, char const* const name, char const* const v
     if ('(' == name[name_len]) {
         size_t k = name_len;
         ++params;
-        while (strchr(" \t", name[++k]));
+        while (strchr(blankchrs, name[++k]));
 
         while (')' != name[k] && name[k]) {
             do *push(&ls->work) = name[k++];
@@ -639,28 +729,22 @@ void lex_define(lex_state* const ls, char const* const name, char const* const v
 
             ++params;
             if (')' == name[k]) break;
-            while (strchr(" \t", name[++k]));
-            if (',' == name[k]) while (strchr(" \t", name[++k]));
+            while (strchr(blankchrs, name[++k]));
+            if (',' == name[k]) while (strchr(blankchrs, name[++k]));
         }
     }
 
     ls->cstream = value;
-    char c;
 
     size_t const value_at = ls->work.len;
     size_t length = 0;
-    if ('\n' != *value) do {
-        while (strchr(" \t", c = _lex_getc(ls)));
-        if ('\n' == c) break;
-        _lex_ungetc(ls, c);
-
-        size_t const plen = ls->tokens.len, token_at = _lex_simple(ls);
-        ls->tokens.len = plen;
-
+    ls->nlend = 1;
+    if ('\n' != *value) for (size_t token_at; token_at = lext(ls), ls->tokens.ptr[token_at];) {
         size_t const toklen = strlen(ls->tokens.ptr+token_at);
         length+= toklen+1;
         strcpy(grow(&ls->work, ls->work.len, toklen+1), ls->tokens.ptr+token_at);
-    } while (*ls->cstream);
+    }
+    ls->nlend = 0;
 
     ls->cstream = NULL;
 
@@ -715,38 +799,36 @@ void lex_free(lex_state* const ls) {
 
 long lex_eval(lex_state* const ls, char const* const expr) {
     ls->cstream = expr;
-    long r = _lex_eval(ls);
+    long const r = _lex_eval(ls);
     ls->cstream = NULL;
     return r;
 }
 
 size_t lext(lex_state* const ls) {
-    if (!ls->sources.len || endd) {
-        *push(&ls->tokens) = '\0';
-        return ls->tokens.len-1;
-    }
+#   define eof_token  *push(&ls->tokens) = '\0', ls->tokens.len-1
+    if (!ls->cstream && !ls->sources.len) return eof_token;
 
     if (!ls->ahead) {
-        size_t const pline = curr->line;
+        size_t const pline = ls->cstream ? 0 : curr->line;
 
         char c;
-        while (strchr(" \t\n\r", c = _lex_getc(ls)));
+        char const* const blanks = ls->nlend ? blankchrs : nlchrs blankchrs;
+        while (strchr(blanks, c = _lex_getc(ls)));
+        if ('\n' == c) return eof_token;
+        _lex_ungetc(ls, c);
 
         if (endd) {
+            if (ls->cstream) return eof_token;
             fclose(curr->stream);
-            if (!--ls->sources.len) {
-                *push(&ls->tokens) = '\0';
-                return ls->tokens.len-1;
-            } else return lext(ls);
+            return !--ls->sources.len ? eof_token : lext(ls);
         }
 
-        if ('#' == c && ('\0' == ls->tokens.ptr[ls->tokens.len-2] || pline != curr->line)) {
+        if (pline && '#' == c && ('\0' == ls->tokens.ptr[ls->tokens.len-2] || pline != curr->line)) {
             _lex_directive(ls);
             return lext(ls);
         }
-
-        _lex_ungetc(ls, c);
     }
+#   undef eof_token
 
     size_t const r = ls->ahead ? _lex_ahead(ls) : _lex_simple(ls);
 
@@ -764,6 +846,13 @@ size_t lext(lex_state* const ls) {
         else if (nameis("__TIME__")) replace_len = strftime(replace, sizeof replace-1, "\"%T\"", localtime((time(&tt), &tt)));
 
         else for (size_t k = 0; k < ls->macros.len; ++k) if (!ls->macros.ptr[k].marked && nameis(ls->work.ptr+ls->macros.ptr[k].name)) {
+            if (-1 < ls->macros.ptr[k].params) {
+                size_t const n = ls->macros.ptr[k].params;
+                notif("NIY: function-like macros; %zu params:", n);
+                for (size_t at = ls->macros.ptr[k].name, p = 0; at+= strlen(ls->work.ptr+at)+1, p < n; ++p)
+                    notif(" - %s", ls->work.ptr+at);
+            }
+
             size_t const len = ls->macros.ptr[k].length;
             ls->ahead+= len+1+strlen(ls->tokens.ptr+r)+1;
             memcpy(grow(&ls->tokens, r, len+1), ls->work.ptr+ls->macros.ptr[k].value, len);
@@ -887,6 +976,9 @@ size_t lex_struqo(char* const unquoted, size_t const size, char const* const quo
     return quoted[s+1] ? 0 : d;
 }
 
+#undef nlchrs
+#undef blankchrs
+
 #undef isid_t
 #undef isid_h
 #undef isnum
@@ -903,6 +995,8 @@ int main(int argc, char** argv) {
 
     lex_state* const ls = &(lex_state){0};
 
+    char const* format = "[%s:%3zu]\t%s\n";
+
     for (; argc--; ++argv) {
         if ('-' == **argv) switch ((*argv)[1]) {
         default:  printf("Unknown flag -%c\n", (*argv)[1]);     return EXIT_FAILURE;
@@ -911,6 +1005,8 @@ int main(int argc, char** argv) {
         case 'D': lex_define(ls, *argv+2, (eq = strchr(*argv, '=')) ? *eq = '\0', eq+1 : "1"); break;
         case 'U': lex_undef(ls, *argv+2);  break;
         case 'I': lex_incdir(ls, *argv+2); break;
+        case 'F': format = *argv+2;        break;
+        case 'E': printf("res: %li\n", lex_eval(ls, *argv+2)); return 0;
         case'\0': break;
         } else if (!(stream = fopen(file = *argv, "r"))) {
             printf("Could not read file %s\n", *argv);
@@ -925,7 +1021,7 @@ int main(int argc, char** argv) {
         if ('@' == ls->tokens.ptr[k]) {
             ls->tokens.len-= 2;
             _lex_dump(ls, stdout);
-        } else printf("[%s:%3zu]\t%s\n",
+        } else printf(format,
                 ls->work.ptr+ls->sources.ptr[ls->sources.len-1].file,
                 ls->sources.ptr[ls->sources.len-1].line,
                 ls->tokens.ptr+k);
