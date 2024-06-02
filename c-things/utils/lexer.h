@@ -27,8 +27,6 @@
 /// - on_lex_unknowndir
 /// - on_lex_preprocerr
 
-// TODO: function-like macros
-
 #ifndef LEXER_H
 #define LEXER_H
 
@@ -84,7 +82,7 @@ struct lex_state {
         size_t line; // 1 based
     }) sources;
     char gotc; // private
-    int nlend; // private
+    short nlend, noxid; // private
     char const* cstream; // (essentially) private
 
     arry(char) work; // (mostly) private
@@ -330,10 +328,10 @@ static size_t _lex_simple(lex_state* const ls) {
             return token_at;
         }
 
-        // yyy: i think this tad approximative idk
         if (c0 < ' ' || '~' < c0) {
             ls->tokens.ptr[ls->tokens.len-1] = '\0';
 
+            // maybe
             char const* const blanks = ls->nlend ? blankchrs : nlchrs blankchrs;
             while (strchr(blanks, c = _lex_getc(ls)));
             if ('\n' == c) return token_at;
@@ -470,6 +468,7 @@ static long _lex_eval_zero(lex_state* const ls) {
 }
 
 static long _lex_eval(lex_state* const ls) {
+    // precondition: 0 == ls->ahead
     size_t const plen = ls->tokens.len;
     ls->nlend = 1;
 
@@ -477,6 +476,7 @@ static long _lex_eval(lex_state* const ls) {
 
     ls->nlend = 0;
     ls->tokens.len = plen;
+    ls->ahead = 0;
     return r;
 }
 
@@ -625,13 +625,13 @@ static void _lex_directive(lex_state* const ls) {
 
         size_t const value_at = ls->work.len;
         size_t length = 0;
-        ls->nlend = 1;
+        ls->nlend = ls->noxid = 1;
         if ('\n' != c) for (size_t token_at; token_at = lext(ls), ls->tokens.ptr[token_at];) {
             size_t const toklen = strlen(ls->tokens.ptr+token_at);
             length+= toklen+1;
             strcpy(grow(&ls->work, ls->work.len, toklen+1), ls->tokens.ptr+token_at);
         }
-        ls->nlend = 0;
+        ls->nlend = ls->noxid = 0;
 
         struct lex_macro* found = NULL;
         for (size_t k = 0; k < ls->macros.len; ++k) if (!strcmp(ls->work.ptr+ls->macros.ptr[k].name, ls->work.ptr+name_at)) {
@@ -738,13 +738,13 @@ void lex_define(lex_state* const ls, char const* const name, char const* const v
 
     size_t const value_at = ls->work.len;
     size_t length = 0;
-    ls->nlend = 1;
+    ls->nlend = ls->noxid = 1;
     if ('\n' != *value) for (size_t token_at; token_at = lext(ls), ls->tokens.ptr[token_at];) {
         size_t const toklen = strlen(ls->tokens.ptr+token_at);
         length+= toklen+1;
         strcpy(grow(&ls->work, ls->work.len, toklen+1), ls->tokens.ptr+token_at);
     }
-    ls->nlend = 0;
+    ls->nlend = ls->noxid = 0;
 
     ls->cstream = NULL;
 
@@ -832,7 +832,7 @@ size_t lext(lex_state* const ls) {
 
     size_t const r = ls->ahead ? _lex_ahead(ls) : _lex_simple(ls);
 
-    if (isidh(ls->tokens.ptr[r])) {
+    if (!ls->noxid && isidh(ls->tokens.ptr[r])) {
         time_t tt;
         char replace[2048];
         size_t replace_len = 0;
@@ -846,18 +846,65 @@ size_t lext(lex_state* const ls) {
         else if (nameis("__TIME__")) replace_len = strftime(replace, sizeof replace-1, "\"%T\"", localtime((time(&tt), &tt)));
 
         else for (size_t k = 0; k < ls->macros.len; ++k) if (!ls->macros.ptr[k].marked && nameis(ls->work.ptr+ls->macros.ptr[k].name)) {
-            if (-1 < ls->macros.ptr[k].params) {
-                size_t const n = ls->macros.ptr[k].params;
-                notif("NIY: function-like macros; %zu params:", n);
-                for (size_t at = ls->macros.ptr[k].name, p = 0; at+= strlen(ls->work.ptr+at)+1, p < n; ++p)
-                    notif(" - %s", ls->work.ptr+at);
+            struct lex_macro* const macro = ls->macros.ptr+k;
+            arry(size_t) args = {0};
+
+            if (-1 < macro->params) {
+                ls->noxid = 1;
+                size_t const par_at = lext(ls);
+                ls->noxid = 0;
+                if ('(' != ls->tokens.ptr[par_at]) {
+                    ls->ahead+= strlen(ls->tokens.ptr+par_at)+1;
+                    break;
+                }
+                // ls->tokens: name @ ( @ a @ , @ b @ ) @ ...
+                //             (^r)   ^ [ doesn't exists -]
+
+                ls->noxid = 1;
+                size_t comma_at;
+                for (size_t p = 0; !endd; ++p) {
+                    size_t const since_at = ls->tokens.len - ls->ahead - 2; // (
+                    *push(&args) = ls->work.len;
+
+                    do comma_at = lext(ls);
+                    while (',' != ls->tokens.ptr[comma_at] && ')' != ls->tokens.ptr[comma_at] && !endd);
+                    // ls->tokens: name @ ( @ a @ , @ b @ ) @ ...
+                    //                            ^
+
+                    size_t const length = comma_at-since_at;
+                    memcpy(grow(&ls->work, ls->work.len, length), ls->tokens.ptr+since_at, length);
+                    grow(&ls->tokens, comma_at, -length);
+                    // ls->tokens: name @ , @ b @ ) @ ...
+                    //                    ^
+                    // ls->work: a1 @ a2 @
+                }
+                ls->noxid = 0;
+                // ls->tokens: name @ ) @ ...
+                grow(&ls->tokens, r+comma_at+2, -2);
+                // ls->tokens: name @ ...
             }
 
-            size_t const len = ls->macros.ptr[k].length;
-            ls->ahead+= len+1+strlen(ls->tokens.ptr+r)+1;
-            memcpy(grow(&ls->tokens, r, len+1), ls->work.ptr+ls->macros.ptr[k].value, len);
-            ls->tokens.ptr[r+len] = 0x1a;
-            ls->macros.ptr[k].marked = 1;
+            ls->ahead+= macro->length+1 + strlen(ls->tokens.ptr+r)+1;
+            memcpy(grow(&ls->tokens, r, macro->length+1), ls->work.ptr+macro->value, macro->length);
+            ls->tokens.ptr[r+macro->length] = 0x1a;
+            macro->marked = 1;
+
+            if (args.len) {
+                // working range is r..r+macro->length
+
+                // TODO: here
+                // - the args are stored tokenize, but as given (not expanded yet)
+                //   (so stringize/past will use single space if multi-token)
+                // - the tokens of the macro are splatted raw as if object-like
+                //   in ls->tokens.ptr[r..r+macro->length]
+                // - 0x1a<name> and ls->ahead are already installed
+                //   ls->ahead must be kept up to date on each edit
+                notif("WIP: function-like");
+
+                ls->work.len = args.ptr[0];
+                frry(&args);
+            }
+
             return lext(ls);
         }
 #       undef nameis
@@ -946,20 +993,47 @@ size_t lex_struqo(char* const unquoted, size_t const size, char const* const quo
         case 'v': unquoted[d++] = '\v'; break;
 
             long unsigned r;
+            unsigned n;
 
         case 'x':
             r = 0;
+            n = -1u;
+            if (0)
+        case 'u':
+        case 'U':
+                n = 4+(1-(c>>5&1))*4;
+
             static char const dgts[] = "0123456789abcdef";
             char const* v = strchr(dgts, quoted[s]|32);
             do r = (r<<4) + (v-dgts);
-            while ((v = strchr(dgts, quoted[++s]|32)));
-            unquoted[d++] = r;
-            break;
+            while (--n && (v = strchr(dgts, quoted[++s]|32)));
 
-        case 'u':
-        case 'U':
-            notif("NIY: 'Universal character names' (Unicode)");
-            return 0;
+            if ('x' == c) {
+                unquoted[d++] = r;
+                break;
+            }
+
+            if (r < 128) unquoted[d++] = r;
+            else {
+                if (d+2 >= size) return 0;
+                char const x = r&63;
+                r>>= 6;
+                if (r < 32) unquoted[d++] = 192|r;
+                else {
+                    if (d+3 >= size) return 0;
+                    char const y = r&63;
+                    r>>= 6;
+                    if (r < 16) unquoted[d++] = 224|r;
+                    else {
+                        if (d+4 >= size) return 0;
+                        char const z = r&63;
+                        unquoted[d++] = 240|r>>6;
+                        unquoted[d++] = 128|z;
+                    }
+                    unquoted[d++] = 128|y;
+                }
+                unquoted[d++] = 128|x;
+            }
             break;
 
         default:
