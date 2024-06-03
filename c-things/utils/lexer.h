@@ -99,6 +99,7 @@ struct lex_state {
 #define last(__a) ((__a)->ptr+(__a)->len-1)
 #define each(__a) for (void* const _ptr = (__a)->ptr,* const _end = (__a)->ptr+(__a)->len; _end == (__a)->ptr ? (__a)->ptr = _ptr, 0 : 1; ++(__a)->ptr)
 static char* _lex_arrygrow(char** const ptr, size_t* const len, size_t* const cap, size_t const s, size_t const k, size_t const n) {
+    if (!n) return *ptr+k*s;
     size_t const nlen = *len+n;
     if (*cap < nlen && !(cap && (*ptr = realloc(*ptr, (*cap = nlen)*s)))) exit(EXIT_FAILURE);
     if (k < *len) memmove(*ptr+(k+n)*s, *ptr+k*s, (*len-k)*s);
@@ -132,16 +133,14 @@ static char* _lex_arrygrow(char** const ptr, size_t* const len, size_t* const ca
 #define notif(...) (fprintf(stderr, HERE __VA_ARGS__), fputc('\n', stderr))
 
 static void _lex_dump(lex_state* const ls, FILE* const strm) {
-#   define wstr(at) (ls->work.ptr+(at))
     fprintf(strm, "lex_state {\n");
     fprintf(strm, "    macros [\n");
     each (&ls->macros) {
-        fprintf(strm, "        {\n");
-        fprintf(strm, "            name= \"%s\"\n", wstr(ls->macros.ptr->name));
-        fprintf(strm, "            value= [\n");
-        for (size_t k = 0; k < ls->macros.ptr->length; k+= strlen(wstr(ls->macros.ptr->value+k))+1)
-            fprintf(strm, "                %s\n", wstr(ls->macros.ptr->value+k));
-        fprintf(strm, "            ]\n");
+        fprintf(strm, "        {   name= \"%s\"\n", ls->work.ptr+ls->macros.ptr->name);
+        fprintf(strm, "            value= ");
+        for (size_t k = 0; k < ls->macros.ptr->length; k+= strlen(ls->work.ptr+ls->macros.ptr->value+k)+1)
+            fprintf(strm, "%s@", ls->work.ptr+ls->macros.ptr->value+k);
+        fprintf(strm, "\n");
         fprintf(strm, "            length= %zu\n", ls->macros.ptr->length);
         fprintf(strm, "            params= %d\n", ls->macros.ptr->params);
         fprintf(strm, "            marked= %s\n", ls->macros.ptr->marked ? "true" : "false");
@@ -152,22 +151,22 @@ static void _lex_dump(lex_state* const ls, FILE* const strm) {
     each (&ls->paths) fprintf(strm, "        %s\n", *ls->paths.ptr);
     fprintf(strm, "    ]\n");
     fprintf(strm, "    sources [\n");
-    each (&ls->sources) fprintf(strm, "        %s:%zu\n", wstr(ls->sources.ptr->file), ls->sources.ptr->line);
+    each (&ls->sources) fprintf(strm, "        %s:%zu\n", ls->work.ptr+ls->sources.ptr->file, ls->sources.ptr->line);
     fprintf(strm, "    ]\n");
     fprintf(strm, "    gotc= 0x%02hhX\n", ls->gotc);
-    fprintf(strm, "    gotc= %s\n", ls->nlend ? "true" : "false");
+    fprintf(strm, "    nlend= %s\n", ls->nlend ? "true" : "false");
+    fprintf(strm, "    noxid= %s\n", ls->noxid ? "true" : "false");
     fprintf(strm, "    cstream= %s@\n", ls->cstream);
-    fprintf(strm, "    work\n");
-    for (size_t k = 0; k < ls->work.len; k+= strlen(wstr(k))+1)
-        fprintf(strm, "%s@", wstr(k));
+    fprintf(strm, "    work= ");
+    for (size_t k = 0; k < ls->work.len; k+= strlen(ls->work.ptr+k)+1)
+        fprintf(strm, "%s@", ls->work.ptr+k);
     fprintf(strm, "\n");
     fprintf(strm, "    ahead= %zu\n", ls->ahead);
-    fprintf(strm, "    tokens\n");
+    fprintf(strm, "    tokens= ");
     for (size_t k = 0; k < ls->tokens.len; k+= strlen(ls->tokens.ptr+k)+1)
         fprintf(strm, "%s@", ls->tokens.ptr+k);
-    fprintf(strm, "\n%*s^\n", (unsigned)(ls->tokens.len - ls->ahead), "");
+    fprintf(strm, "\n            %*s^\n", (unsigned)(ls->tokens.len - ls->ahead), "");
     fprintf(strm, "}\n");
-#   undef wstr
 }
 
 #define curr  (ls->sources.ptr+ls->sources.len-1)
@@ -512,6 +511,36 @@ static void _lex_skipblock(lex_state* const ls, int const can_else) {
     } while (!done && (!endd || (fclose(curr->stream), --ls->sources.len)));
 }
 
+static void _lex_definish(lex_state* const ls, char const maybe_nl, size_t const name_at, int const params) {
+    // precondition: 0 == ls->ahead
+    size_t const plen = ls->tokens.len;
+    ls->nlend = ls->noxid = 1;
+
+    size_t const value_at = ls->work.len;
+    size_t length = 0;
+    if ('\n' != maybe_nl) for (size_t token_at; token_at = lext(ls), ls->tokens.ptr[token_at];) {
+        size_t const toklen = strlen(ls->tokens.ptr+token_at);
+        length+= toklen+1;
+        strcpy(grow(&ls->work, ls->work.len, toklen+1), ls->tokens.ptr+token_at);
+    }
+
+    struct lex_macro* found = NULL;
+    for (size_t k = 0; k < ls->macros.len; ++k) if (!strcmp(ls->work.ptr+ls->macros.ptr[k].name, ls->work.ptr+name_at)) {
+        found = ls->macros.ptr+k;
+        break;
+    }
+    *(found ? found : push(&ls->macros)) = (struct lex_macro){
+        .name= name_at,
+        .value= value_at,
+        .length= length,
+        .params= params,
+    };
+
+    ls->nlend = ls->noxid = 0;
+    ls->tokens.len = plen;
+    ls->ahead = 0;
+}
+
 static void _lex_directive(lex_state* const ls) {
     char c;
 #   define next() (c = _lex_getc(ls))
@@ -623,27 +652,7 @@ static void _lex_directive(lex_state* const ls) {
             }
         }
 
-        size_t const value_at = ls->work.len;
-        size_t length = 0;
-        ls->nlend = ls->noxid = 1;
-        if ('\n' != c) for (size_t token_at; token_at = lext(ls), ls->tokens.ptr[token_at];) {
-            size_t const toklen = strlen(ls->tokens.ptr+token_at);
-            length+= toklen+1;
-            strcpy(grow(&ls->work, ls->work.len, toklen+1), ls->tokens.ptr+token_at);
-        }
-        ls->nlend = ls->noxid = 0;
-
-        struct lex_macro* found = NULL;
-        for (size_t k = 0; k < ls->macros.len; ++k) if (!strcmp(ls->work.ptr+ls->macros.ptr[k].name, ls->work.ptr+name_at)) {
-            found = ls->macros.ptr+k;
-            break;
-        }
-        *(found ? found : push(&ls->macros)) = (struct lex_macro){
-            .name= name_at,
-            .value= value_at,
-            .length= length,
-            .params= params,
-        };
+        _lex_definish(ls, c, name_at, params);
     }
 
     else if (diris("undef")) {
@@ -711,6 +720,38 @@ static void _lex_directive(lex_state* const ls) {
 #   undef next
 }
 
+static size_t _lex_expand_arg_asis(lex_state* const ls,
+        struct lex_macro const* const macro, void const* const arry_args,
+        char const* const name, size_t const name_len,
+        size_t const range_start, size_t const range_end) {
+    int found = -1;
+    if (isidh(name[0])) {
+        char const* curr_name = ls->work.ptr+macro->name;
+        for (int k = 0; curr_name+= strlen(curr_name)+1, k < macro->params; ++k) if (!strcmp(curr_name, name)) {
+            found = k;
+            break;
+        }
+    }
+
+    if (!isidh(name[0]) || -1 == found) {
+        memmove(ls->tokens.ptr+range_start, name, name_len+1);
+        grow(&ls->tokens, range_end, name_len - (range_end-range_start));
+        return name_len;
+    }
+
+    else {
+        arry(size_t) const* const args = arry_args;
+
+        size_t from_at = ls->work.len-1, repl_len = 1;
+        if (found+1u == args->len) repl_len = ls->work.len - (from_at = args->ptr[found]);
+        else if ((unsigned)found < args->len) repl_len = args->ptr[found+1] - (from_at = args->ptr[found]);
+
+        grow(&ls->tokens, range_end, repl_len - (range_end-range_start));
+        memcpy(ls->tokens.ptr+range_start, ls->work.ptr+from_at, repl_len);
+        return repl_len;
+    }
+}
+
 void lex_define(lex_state* const ls, char const* const name, char const* const value) {
     size_t const name_at = ls->work.len, name_len = strcspn(name, "(");
     memcpy(grow(&ls->work, ls->work.len, name_len+1), name, name_len);
@@ -735,30 +776,8 @@ void lex_define(lex_state* const ls, char const* const name, char const* const v
     }
 
     ls->cstream = value;
-
-    size_t const value_at = ls->work.len;
-    size_t length = 0;
-    ls->nlend = ls->noxid = 1;
-    if ('\n' != *value) for (size_t token_at; token_at = lext(ls), ls->tokens.ptr[token_at];) {
-        size_t const toklen = strlen(ls->tokens.ptr+token_at);
-        length+= toklen+1;
-        strcpy(grow(&ls->work, ls->work.len, toklen+1), ls->tokens.ptr+token_at);
-    }
-    ls->nlend = ls->noxid = 0;
-
+    _lex_definish(ls, *value, name_at, params);
     ls->cstream = NULL;
-
-    struct lex_macro* found = NULL;
-    for (size_t k = 0; k < ls->macros.len; ++k) if (!strcmp(ls->work.ptr+ls->macros.ptr[k].name, ls->work.ptr+name_at)) {
-        found = ls->macros.ptr+k;
-        break;
-    }
-    *(found ? found : push(&ls->macros)) = (struct lex_macro){
-        .name= name_at,
-        .value= value_at,
-        .length= length,
-        .params= params,
-    };
 }
 
 void lex_undef(lex_state* const ls, char const* const name) {
@@ -862,17 +881,22 @@ size_t lext(lex_state* const ls) {
 
                 ls->noxid = 1;
                 size_t comma_at;
-                for (size_t p = 0; !endd; ++p) {
-                    size_t const since_at = ls->tokens.len - ls->ahead - 2; // (
+                char c = 0;
+                for (size_t p = 0; ')' != c && !endd; ++p) {
+                    size_t const since_at = ls->tokens.len - ls->ahead - 2; // ( @
                     *push(&args) = ls->work.len;
 
-                    do comma_at = lext(ls);
-                    while (',' != ls->tokens.ptr[comma_at] && ')' != ls->tokens.ptr[comma_at] && !endd);
+                    unsigned depth = 0;
+                    do {
+                        comma_at = lext(ls), c = ls->tokens.ptr[comma_at];
+                        if (!depth && ')' == c) break;
+                        depth+= ('(' == c) - (')' == c);
+                    } while ((depth || ',' != c) && !endd);
                     // ls->tokens: name @ ( @ a @ , @ b @ ) @ ...
                     //                            ^
 
                     size_t const length = comma_at-since_at;
-                    memcpy(grow(&ls->work, ls->work.len, length), ls->tokens.ptr+since_at, length);
+                    memcpy(grow(&ls->work, ls->work.len, length-2), ls->tokens.ptr+since_at+2, length-2);
                     grow(&ls->tokens, comma_at, -length);
                     // ls->tokens: name @ , @ b @ ) @ ...
                     //                    ^
@@ -884,27 +908,63 @@ size_t lext(lex_state* const ls) {
                 // ls->tokens: name @ ...
             }
 
-            ls->ahead+= macro->length+1 + strlen(ls->tokens.ptr+r)+1;
             memcpy(grow(&ls->tokens, r, macro->length+1), ls->work.ptr+macro->value, macro->length);
             ls->tokens.ptr[r+macro->length] = 0x1a;
-            macro->marked = 1;
 
             if (args.len) {
-                // working range is r..r+macro->length
+                for (size_t now_at = r, end_at = r+macro->length; now_at < end_at; ++now_at) {
+                    char* const token = ls->tokens.ptr+now_at;
 
-                // TODO: here
-                // - the args are stored tokenize, but as given (not expanded yet)
-                //   (so stringize/past will use single space if multi-token)
-                // - the tokens of the macro are splatted raw as if object-like
-                //   in ls->tokens.ptr[r..r+macro->length]
-                // - 0x1a<name> and ls->ahead are already installed
-                //   ls->ahead must be kept up to date on each edit
-                notif("WIP: function-like");
+                    if ('#' == token[0]) {
+                        if ('#' == token[1]) {
+                            // AAA @ ## @ bbb @  ->  AAABBB @
+                            size_t const next_len = strlen(token+3);
+                            size_t const repl_len = _lex_expand_arg_asis(ls,
+                                    macro, &args,
+                                    token+3, next_len,
+                                    now_at-1, now_at+3+next_len+1)-1;
+                            now_at+= repl_len;
+                            end_at+= repl_len - (now_at+3+next_len+1-now_at);
+                        } else {
+                            // # @ ccc @  ->  # CCC @ @  ->  " CCC " @
+                            size_t const next_len = strlen(token+2);
+                            // TODO: when next token is "__VA_ARGS__"
+                            size_t const repl_len = _lex_expand_arg_asis(ls,
+                                    macro, &args,
+                                    token+2, next_len,
+                                    now_at+1, now_at+2+next_len);
+                            token[0] = token[repl_len] = '"';
+                            for (char* z; (z = memchr(token+1, repl_len-2, '\0')); *z = ' ');
+                            // TODO: also needs to escape the '"'s and '\\'s
+                            now_at+= repl_len;
+                            end_at+= repl_len - (now_at+2+next_len-now_at-1);
+                        }
+                    }
+
+                    else if (isidh(token[0])) {
+                        size_t const token_len = strlen(token);
+                        if (!strcmp("##", token+token_len+1)) {
+                            size_t const repl_len = _lex_expand_arg_asis(ls,
+                                    macro, &args,
+                                    token, token_len,
+                                    now_at, now_at+token_len+1)-1;
+                            now_at+= repl_len;
+                            end_at+= repl_len+1 - (now_at+token_len+1-now_at);
+                        } else {
+                            notif("NIY: fully expand param _now_ for eg `f( f(1) )` to work, in particular __VA_ARGS__ here; %s@", token);
+                            now_at+= token_len;
+                        }
+                    }
+
+                    else now_at+= strlen(token);
+                }
 
                 ls->work.len = args.ptr[0];
                 frry(&args);
             }
 
+            ls->ahead = ls->tokens.len - r;
+            macro->marked = 1;
             return lext(ls);
         }
 #       undef nameis
