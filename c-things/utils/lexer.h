@@ -82,7 +82,7 @@ struct lex_state {
         size_t line; // 1 based
     }) sources;
     char gotc; // private
-    short nlend, noxid; // private
+    short nlend, noxid, nomrg; // private
     char const* cstream; // (essentially) private
 
     arry(char) work; // (mostly) private
@@ -153,10 +153,11 @@ static void _lex_dump(lex_state* const ls, FILE* const strm) {
     fprintf(strm, "    sources [\n");
     each (&ls->sources) fprintf(strm, "        %s:%zu\n", ls->work.ptr+ls->sources.ptr->file, ls->sources.ptr->line);
     fprintf(strm, "    ]\n");
-    fprintf(strm, "    gotc= 0x%02hhX\n", ls->gotc);
+    fprintf(strm, "    gotc= 0x%02hhX '%c'\n", ls->gotc, ' ' <= ls->gotc && ls->gotc <= '~' ? ls->gotc : '.');
     fprintf(strm, "    nlend= %s\n", ls->nlend ? "true" : "false");
     fprintf(strm, "    noxid= %s\n", ls->noxid ? "true" : "false");
-    fprintf(strm, "    cstream= %s@\n", ls->cstream);
+    fprintf(strm, "    nomrg= %s\n", ls->nomrg ? "true" : "false");
+    fprintf(strm, "    cstream= %s\n", ls->cstream ? ls->cstream : "(null)");
     fprintf(strm, "    work= ");
     for (size_t k = 0; k < ls->work.len; k+= strlen(ls->work.ptr+k)+1)
         fprintf(strm, "%s@", ls->work.ptr+k);
@@ -239,6 +240,12 @@ static void _lex_ungetc(lex_state* const ls, char const c) {
 
     ls->gotc = c;
     curr->line-= '\n' == c;
+}
+
+static void _lex_fclose(lex_state* const ls) {
+    if (stdin != curr->stream) fclose(curr->stream);
+    curr->stream = NULL;
+    if (1 < ls->sources.len) --ls->sources.len;
 }
 
 static size_t _lex_simple(lex_state* const ls) {
@@ -350,22 +357,23 @@ static size_t _lex_simple(lex_state* const ls) {
 
 static size_t _lex_ahead(lex_state* const ls) {
     size_t const token_at = ls->tokens.len - ls->ahead;
-    size_t const toklen = strlen(ls->tokens.ptr+token_at);
+    size_t const token_len = strlen(ls->tokens.ptr+token_at);
 
     if (0x1a == ls->tokens.ptr[token_at]) {
         char const* const name = ls->tokens.ptr+token_at+1;
-        ls->ahead-= toklen+1;
+        ls->ahead-= token_len+1;
         for (size_t k = 0; k < ls->macros.len; ++k) if (!strcmp(ls->work.ptr+ls->macros.ptr[k].name, name)) {
             ls->macros.ptr[k].marked = 0;
-            grow(&ls->tokens, token_at+toklen+1, -toklen-1);
+            grow(&ls->tokens, token_at+token_len+1, -token_len-1);
             return lext(ls);
         }
 
         // should be unreachable
         ls->ahead = 0;
+        return lext(ls);
     }
 
-    ls->ahead-= toklen+1;
+    ls->ahead-= token_len+1;
     return token_at;
 }
 
@@ -406,7 +414,14 @@ static long _lex_eval_two(lex_state* const ls, long const lhs, size_t const op_a
 #   define hash1(op) (((op)[0]|(op)[1]<<8)%35)
     int const hop = hash1(ls->tokens.ptr+op_at);
     int then = 0;
-    if (ls->tokens.ptr[nop_at] && ')' != ls->tokens.ptr[nop_at]) {
+    char const c = ls->tokens.ptr[nop_at];
+    if (c && ')' != c && ':' != c) {
+        if ('?' == c) {
+            // xxx: pretty sure precedence is wrong but again you shouldn't have such complicated expression in your `#if`s
+            long const consequence = _lex_eval_zero(ls), alternative = _lex_eval_zero(ls);
+            return lhs ? consequence : alternative;
+        }
+
         static char const prec[] = {
             [hash2('|','|')]=   0,
             [hash2('&','&')]=   1,
@@ -508,7 +523,7 @@ static void _lex_skipblock(lex_state* const ls, int const can_else) {
 
         if ('\n' != c) _lex_getdelim(ls, '\n');
         ls->work.len = dir_at;
-    } while (!done && (!endd || (fclose(curr->stream), --ls->sources.len)));
+    } while (!done && (!endd || (_lex_fclose(ls), curr->stream)));
 }
 
 static void _lex_definish(lex_state* const ls, char const maybe_nl, size_t const name_at, int const params) {
@@ -519,9 +534,9 @@ static void _lex_definish(lex_state* const ls, char const maybe_nl, size_t const
     size_t const value_at = ls->work.len;
     size_t length = 0;
     if ('\n' != maybe_nl) for (size_t token_at; token_at = lext(ls), ls->tokens.ptr[token_at];) {
-        size_t const toklen = strlen(ls->tokens.ptr+token_at);
-        length+= toklen+1;
-        strcpy(grow(&ls->work, ls->work.len, toklen+1), ls->tokens.ptr+token_at);
+        size_t const token_len = strlen(ls->tokens.ptr+token_at);
+        length+= token_len+1;
+        strcpy(grow(&ls->work, ls->work.len, token_len+1), ls->tokens.ptr+token_at);
     }
 
     struct lex_macro* found = NULL;
@@ -574,17 +589,35 @@ static void _lex_directive(lex_state* const ls) {
         ls->work.len = dir_at;
         on_lex_preprocerr(ls, (ls->work.ptr+message_at));
 
-        fclose(curr->stream);
-        --ls->sources.len;
+        _lex_fclose(ls);
     }
 
     else if (diris("include")) {
         size_t const path_at = ls->work.len;
+        int expanded = 0;
+
+        if (isidh(c)) {
+            // precondition: 0 == ls->ahead
+            size_t const plen = ls->tokens.len;
+            ls->nlend = ls->nomrg = 1;
+
+            // xxx: don't wanna support sys-style paths in expansion properly because too janky and you shouldn't anyways
+            _lex_ungetc(ls, c);
+            size_t const res_at = lext(ls);
+            c = strcpy(ls->work.ptr+path_at, ls->tokens.ptr+res_at)[0];
+            expanded = 1;
+
+            ls->nlend = ls->nomrg = 0;
+            ls->tokens.len = plen;
+            ls->ahead = 0;
+        }
 
         if ('"' == c) {
-            while ('"' != accu() && !endd);
-            ls->work.ptr[ls->work.len-1] = '\0';
-            _lex_getdelim(ls, '\n');
+            if (!expanded) {
+                while ('"' != accu() && !endd);
+                ls->work.ptr[ls->work.len-1] = '\0';
+                _lex_getdelim(ls, '\n');
+            }
             ls->work.len = dir_at;
 
             char file[2048];
@@ -602,10 +635,12 @@ static void _lex_directive(lex_state* const ls) {
 
                 FILE* const stream = fopen(file, "r");
                 if (stream) {
+                    // needs to do it manually here because `_lex_ungetc` would carry the '\n' into the new file
+                    ungetc('\n', curr->stream), --curr->line, ls->gotc = '\0';
                     size_t const file_at = ls->work.len;
                     strcpy(grow(&ls->work, ls->work.len, strlen(file)+1), file);
                     *push(&ls->sources) = (struct lex_source){.stream= stream, .file= file_at, .line= 1};
-                    break;
+                    return;
                 }
 
                 if (k >= ls->paths.len) {
@@ -623,8 +658,6 @@ static void _lex_directive(lex_state* const ls) {
             ls->work.len = dir_at;
             on_lex_sysinclude(ls, (ls->work.ptr+path_at));
         }
-
-        else notif("NIY: expand preprocessor identifier for file path");
     }
 
     else if (diris("define")) {
@@ -718,16 +751,19 @@ static void _lex_directive(lex_state* const ls) {
 
 #   undef accu
 #   undef next
+    _lex_ungetc(ls, '\n');
 }
 
 static size_t _lex_expand_arg_asis(lex_state* const ls,
         struct lex_macro const* const macro, void const* const arry_args,
         char const* const name, size_t const name_len,
         size_t const range_start, size_t const range_end) {
+    int const va_args = !strcmp("__VA_ARGS__", name);
     int found = -1;
     if (isidh(name[0])) {
+        char const* const search_name = va_args ? "..." : name;
         char const* curr_name = ls->work.ptr+macro->name;
-        for (int k = 0; curr_name+= strlen(curr_name)+1, k < macro->params; ++k) if (!strcmp(curr_name, name)) {
+        for (int k = 0; curr_name+= strlen(curr_name)+1, k < macro->params; ++k) if (!strcmp(curr_name, search_name)) {
             found = k;
             break;
         }
@@ -735,20 +771,161 @@ static size_t _lex_expand_arg_asis(lex_state* const ls,
 
     if (!isidh(name[0]) || -1 == found) {
         memmove(ls->tokens.ptr+range_start, name, name_len+1);
-        grow(&ls->tokens, range_end, name_len - (range_end-range_start));
-        return name_len;
+        grow(&ls->tokens, range_end, name_len+1 - (range_end-range_start));
+        return name_len+1;
     }
 
     else {
         arry(size_t) const* const args = arry_args;
 
         size_t from_at = ls->work.len-1, repl_len = 1;
-        if (found+1u == args->len) repl_len = ls->work.len - (from_at = args->ptr[found]);
-        else if ((unsigned)found < args->len) repl_len = args->ptr[found+1] - (from_at = args->ptr[found]);
+        if (found+1u == args->len || va_args) repl_len = ls->work.len - (from_at = args->ptr[found]);
+        else if ((unsigned)found < args->len) repl_len = args->ptr[found+1]-2 - (from_at = args->ptr[found]);
 
         grow(&ls->tokens, range_end, repl_len - (range_end-range_start));
         memcpy(ls->tokens.ptr+range_start, ls->work.ptr+from_at, repl_len);
         return repl_len;
+    }
+}
+
+static void _lex_expand_id_here(lex_state* const ls, size_t const token_at) {
+    time_t tt;
+    char replace[2048];
+    size_t replace_len = 0;
+
+#   define nameis(__l) (!strcmp(__l, ls->tokens.ptr+token_at))
+    if (0) ;
+
+    else if (nameis("__FILE__")) replace_len = lex_strquo(replace, sizeof replace-1, ls->work.ptr+curr->file, strlen(ls->work.ptr+curr->file));
+    else if (nameis("__LINE__")) replace_len = snprintf(replace, sizeof replace-1, "%zu", curr->line);
+    else if (nameis("__DATE__")) replace_len = strftime(replace, sizeof replace-1, "\"%b %e %Y\"", localtime((time(&tt), &tt)));
+    else if (nameis("__TIME__")) replace_len = strftime(replace, sizeof replace-1, "\"%T\"", localtime((time(&tt), &tt)));
+
+    else for (size_t k = 0; k < ls->macros.len; ++k) if (!ls->macros.ptr[k].marked && nameis(ls->work.ptr+ls->macros.ptr[k].name)) {
+        struct lex_macro* const macro = ls->macros.ptr+k;
+        arry(size_t) args = {0};
+
+        if (-1 < macro->params) {
+            ls->noxid = 1;
+            size_t const par_at = lext(ls);
+            ls->noxid = 0;
+            if ('(' != ls->tokens.ptr[par_at]) {
+                ls->ahead+= strlen(ls->tokens.ptr+par_at)+1;
+                break;
+            }
+            // ls->tokens: name @ ( @ a @ , @ b @ ) @ ...
+            //             (^r)   ^ [ doesn't exists -]
+
+            ls->noxid = 1;
+            size_t comma_at;
+            char c = 0;
+            for (size_t p = 0; ')' != c && !endd; ++p) {
+                size_t const since_at = ls->tokens.len - ls->ahead - 2; // ( @
+                *push(&args) = ls->work.len+2;
+
+                unsigned depth = 0;
+                do {
+                    comma_at = lext(ls), c = ls->tokens.ptr[comma_at];
+                    if (!depth && ')' == c) break;
+                    depth+= ('(' == c) - (')' == c);
+                } while ((depth || ',' != c) && !endd);
+                // ls->tokens: name @ ( @ a @ , @ b @ ) @ ...
+                //                            ^
+
+                size_t const length = comma_at-since_at;
+                memcpy(grow(&ls->work, ls->work.len, length), ls->tokens.ptr+since_at, length);
+                grow(&ls->tokens, comma_at, -length);
+                comma_at-= length;
+                // ls->tokens: name @ , @ b @ ) @ ...
+                //                    ^
+                // ls->work: ( @ a1 @ a2 @
+                // ...
+                // ls->work: ( @ a1 @ a2 @ , @ b1 @ b2 @
+            }
+            ls->noxid = 0;
+            // ls->tokens: name @ ) @ ...
+            grow(&ls->tokens, comma_at+2, -2);
+            // ls->tokens: name @ ...
+        }
+
+        memcpy(grow(&ls->tokens, token_at, macro->length+1), ls->work.ptr+macro->value, macro->length);
+        ls->tokens.ptr[token_at+macro->length] = 0x1a;
+
+        if (args.len) {
+            for (size_t now_at = token_at, end_at = token_at+macro->length; now_at < end_at; ++now_at) {
+                char* const token = ls->tokens.ptr+now_at;
+                size_t repl_len, range_len;
+
+                if ('#' == token[0]) {
+                    if ('#' == token[1]) {
+                        // AAA @ ## @ bbb @  ->  AAABBB @
+                        size_t const next_len = strlen(token+3);
+                        repl_len = _lex_expand_arg_asis(ls,
+                                macro, &args,
+                                token+3, next_len,
+                                now_at-1, now_at+3+next_len+1)-1;
+                        range_len = next_len+4;
+                    } else {
+                        // # @ ccc @  ->  # CCC @ @  ->  " CCC " @
+                        size_t const next_len = strlen(token+2);
+                        repl_len = _lex_expand_arg_asis(ls,
+                                macro, &args,
+                                token+2, next_len,
+                                now_at+1, now_at+2+next_len);
+                        range_len = next_len+1;
+
+                        token[0] = token[repl_len] = '"';
+                        for (size_t z = now_at+1; z < repl_len+2; ++z) {
+                            char* const c = ls->tokens.ptr+z;
+                            if ('\0' == *c) *c = ' ';
+                            else if ('"' == *c || '\\' == *c) {
+                                *grow(&ls->tokens, z++, 1) = '\\';
+                                ++repl_len;
+                            }
+                        }
+                    } // "#"
+                } // "##?"
+
+                else if (isidh(token[0])) {
+                    range_len = strlen(token);
+                    int const past = !strcmp("##", token+range_len+1);
+                    repl_len = _lex_expand_arg_asis(ls,
+                            macro, &args,
+                            token, range_len,
+                            now_at, now_at+range_len+1)-1;
+
+                    if (!past) {
+                        memcpy(grow(&ls->tokens, now_at+repl_len+1, 2), "\x18", 2);
+                        ls->ahead = ls->tokens.len - now_at;
+                        size_t indicator_at;
+                        do indicator_at = lext(ls);
+                        while ('\x18' != ls->tokens.ptr[indicator_at]);
+                        grow(&ls->tokens, indicator_at+2, -2);
+                        repl_len = indicator_at-now_at-1;
+                    } // "id"
+                } // "id" "##"?
+
+                else repl_len = range_len = strlen(token);
+
+                now_at+= repl_len;
+                end_at+= repl_len - range_len;
+            }
+
+            ls->work.len = args.ptr[0]-2;
+            frry(&args);
+        }
+
+        ls->ahead = ls->tokens.len - token_at;
+        macro->marked = 1;
+        lext(ls);
+        return;
+    }
+#   undef nameis
+
+    if (replace_len) {
+        size_t const token_len = strlen(ls->tokens.ptr+token_at);
+        grow(&ls->tokens, token_at+token_len, replace_len-token_len);
+        strcpy(ls->tokens.ptr+token_at, replace);
     }
 }
 
@@ -794,7 +971,11 @@ void lex_incdir(lex_state* const ls, char const* const path) {
 void lex_entry(lex_state* const ls, FILE* const stream, char const* const file) {
     size_t const file_at = ls->work.len;
     strcpy(grow(&ls->work, ls->work.len, strlen(file)+1), file);
-    *push(&ls->sources) = (struct lex_source){.stream= stream, .file= file_at, .line= 1};
+    *(!ls->sources.len ? push(&ls->sources) : curr) = (struct lex_source){
+        .stream= stream,
+        .file= file_at,
+        .line= 1,
+    };
     *push(&ls->tokens) = '\0';
     *push(&ls->tokens) = '\0';
 }
@@ -810,7 +991,11 @@ void lex_rewind(lex_state* const ls, size_t const count) {
 void lex_free(lex_state* const ls) {
     frry(&ls->macros);
     frry(&ls->paths);
-    each (&ls->sources) if (stdin != ls->sources.ptr->stream) fclose(ls->sources.ptr->stream);
+    each (&ls->sources) {
+        if (ls->sources.ptr->stream && stdin != ls->sources.ptr->stream)
+            fclose(ls->sources.ptr->stream);
+        ls->sources.ptr->stream = NULL;
+    }
     frry(&ls->sources);
     frry(&ls->work);
     frry(&ls->tokens);
@@ -824,8 +1009,8 @@ long lex_eval(lex_state* const ls, char const* const expr) {
 }
 
 size_t lext(lex_state* const ls) {
-#   define eof_token  *push(&ls->tokens) = '\0', ls->tokens.len-1
-    if (!ls->cstream && !ls->sources.len) return eof_token;
+#   define eof_token  (*push(&ls->tokens) = '\0', ls->tokens.len-1)
+    if (!ls->cstream && (!ls->sources.len || !curr->stream)) return eof_token;
 
     if (!ls->ahead) {
         size_t const pline = ls->cstream ? 0 : curr->line;
@@ -834,15 +1019,16 @@ size_t lext(lex_state* const ls) {
         char const* const blanks = ls->nlend ? blankchrs : nlchrs blankchrs;
         while (strchr(blanks, c = _lex_getc(ls)));
         if ('\n' == c) return eof_token;
-        _lex_ungetc(ls, c);
 
         if (endd) {
             if (ls->cstream) return eof_token;
-            fclose(curr->stream);
-            return !--ls->sources.len ? eof_token : lext(ls);
+            _lex_fclose(ls);
+            return lext(ls);
         }
 
-        if (pline && '#' == c && ('\0' == ls->tokens.ptr[ls->tokens.len-2] || pline != curr->line)) {
+        _lex_ungetc(ls, c);
+
+        if (pline && '#' == c && !ls->noxid && ('\0' == ls->tokens.ptr[ls->tokens.len-2] || pline != curr->line)) {
             _lex_directive(ls);
             return lext(ls);
         }
@@ -851,132 +1037,10 @@ size_t lext(lex_state* const ls) {
 
     size_t const r = ls->ahead ? _lex_ahead(ls) : _lex_simple(ls);
 
-    if (!ls->noxid && isidh(ls->tokens.ptr[r])) {
-        time_t tt;
-        char replace[2048];
-        size_t replace_len = 0;
+    if (!ls->noxid && isidh(ls->tokens.ptr[r]))
+        _lex_expand_id_here(ls, r);
 
-#       define nameis(__l) (!strcmp(__l, ls->tokens.ptr+r))
-        if (0) ;
-
-        else if (nameis("__FILE__")) replace_len = lex_strquo(replace, sizeof replace-1, ls->work.ptr+curr->file, strlen(ls->work.ptr+curr->file));
-        else if (nameis("__LINE__")) replace_len = snprintf(replace, sizeof replace-1, "%zu", curr->line);
-        else if (nameis("__DATE__")) replace_len = strftime(replace, sizeof replace-1, "\"%b %e %Y\"", localtime((time(&tt), &tt)));
-        else if (nameis("__TIME__")) replace_len = strftime(replace, sizeof replace-1, "\"%T\"", localtime((time(&tt), &tt)));
-
-        else for (size_t k = 0; k < ls->macros.len; ++k) if (!ls->macros.ptr[k].marked && nameis(ls->work.ptr+ls->macros.ptr[k].name)) {
-            struct lex_macro* const macro = ls->macros.ptr+k;
-            arry(size_t) args = {0};
-
-            if (-1 < macro->params) {
-                ls->noxid = 1;
-                size_t const par_at = lext(ls);
-                ls->noxid = 0;
-                if ('(' != ls->tokens.ptr[par_at]) {
-                    ls->ahead+= strlen(ls->tokens.ptr+par_at)+1;
-                    break;
-                }
-                // ls->tokens: name @ ( @ a @ , @ b @ ) @ ...
-                //             (^r)   ^ [ doesn't exists -]
-
-                ls->noxid = 1;
-                size_t comma_at;
-                char c = 0;
-                for (size_t p = 0; ')' != c && !endd; ++p) {
-                    size_t const since_at = ls->tokens.len - ls->ahead - 2; // ( @
-                    *push(&args) = ls->work.len;
-
-                    unsigned depth = 0;
-                    do {
-                        comma_at = lext(ls), c = ls->tokens.ptr[comma_at];
-                        if (!depth && ')' == c) break;
-                        depth+= ('(' == c) - (')' == c);
-                    } while ((depth || ',' != c) && !endd);
-                    // ls->tokens: name @ ( @ a @ , @ b @ ) @ ...
-                    //                            ^
-
-                    size_t const length = comma_at-since_at;
-                    memcpy(grow(&ls->work, ls->work.len, length-2), ls->tokens.ptr+since_at+2, length-2);
-                    grow(&ls->tokens, comma_at, -length);
-                    // ls->tokens: name @ , @ b @ ) @ ...
-                    //                    ^
-                    // ls->work: a1 @ a2 @
-                }
-                ls->noxid = 0;
-                // ls->tokens: name @ ) @ ...
-                grow(&ls->tokens, r+comma_at+2, -2);
-                // ls->tokens: name @ ...
-            }
-
-            memcpy(grow(&ls->tokens, r, macro->length+1), ls->work.ptr+macro->value, macro->length);
-            ls->tokens.ptr[r+macro->length] = 0x1a;
-
-            if (args.len) {
-                for (size_t now_at = r, end_at = r+macro->length; now_at < end_at; ++now_at) {
-                    char* const token = ls->tokens.ptr+now_at;
-
-                    if ('#' == token[0]) {
-                        if ('#' == token[1]) {
-                            // AAA @ ## @ bbb @  ->  AAABBB @
-                            size_t const next_len = strlen(token+3);
-                            size_t const repl_len = _lex_expand_arg_asis(ls,
-                                    macro, &args,
-                                    token+3, next_len,
-                                    now_at-1, now_at+3+next_len+1)-1;
-                            now_at+= repl_len;
-                            end_at+= repl_len - (now_at+3+next_len+1-now_at);
-                        } else {
-                            // # @ ccc @  ->  # CCC @ @  ->  " CCC " @
-                            size_t const next_len = strlen(token+2);
-                            // TODO: when next token is "__VA_ARGS__"
-                            size_t const repl_len = _lex_expand_arg_asis(ls,
-                                    macro, &args,
-                                    token+2, next_len,
-                                    now_at+1, now_at+2+next_len);
-                            token[0] = token[repl_len] = '"';
-                            for (char* z; (z = memchr(token+1, repl_len-2, '\0')); *z = ' ');
-                            // TODO: also needs to escape the '"'s and '\\'s
-                            now_at+= repl_len;
-                            end_at+= repl_len - (now_at+2+next_len-now_at-1);
-                        }
-                    }
-
-                    else if (isidh(token[0])) {
-                        size_t const token_len = strlen(token);
-                        if (!strcmp("##", token+token_len+1)) {
-                            size_t const repl_len = _lex_expand_arg_asis(ls,
-                                    macro, &args,
-                                    token, token_len,
-                                    now_at, now_at+token_len+1)-1;
-                            now_at+= repl_len;
-                            end_at+= repl_len+1 - (now_at+token_len+1-now_at);
-                        } else {
-                            notif("NIY: fully expand param _now_ for eg `f( f(1) )` to work, in particular __VA_ARGS__ here; %s@", token);
-                            now_at+= token_len;
-                        }
-                    }
-
-                    else now_at+= strlen(token);
-                }
-
-                ls->work.len = args.ptr[0];
-                frry(&args);
-            }
-
-            ls->ahead = ls->tokens.len - r;
-            macro->marked = 1;
-            return lext(ls);
-        }
-#       undef nameis
-
-        if (replace_len) {
-            size_t const token_len = strlen(ls->tokens.ptr+r);
-            grow(&ls->tokens, r+token_len, replace_len-token_len);
-            strcpy(ls->tokens.ptr+r, replace);
-        }
-    }
-
-    if ('"' == ls->tokens.ptr[r]) {
+    if (!ls->nomrg && '"' == ls->tokens.ptr[r]) {
         size_t const n = lext(ls);
         if ('"' == ls->tokens.ptr[n]) grow(&ls->tokens, n+1, -3);
         else ls->ahead+= strlen(ls->tokens.ptr+n)+1;
@@ -1007,14 +1071,13 @@ size_t lex_strquo(char* const quoted, size_t const size, char const* const unquo
             case '\r': c = 'r'; break;
             case '\t': c = 't'; break;
             case '\v': c = 'v'; break;
-            case '\0': c = '0'; break;
 
             default:
                 if (d+4 >= size) return 0;
                 quoted[d++] = '\\';
-                quoted[d++] = 'x';
-                quoted[d++] = "0123456789abcdef"[c>>4 & 15];
-                quoted[d++] = "0123456789abcdef"[c & 15];
+                quoted[d++] = (c>>6 & 3) + '0';
+                quoted[d++] = (c>>3 & 7) + '0';
+                quoted[d++] = (c & 7) + '0';
                 continue;
             }
 
@@ -1154,7 +1217,7 @@ int main(int argc, char** argv) {
     while (k = lext(ls), ls->tokens.ptr[k]) {
         if ('@' == ls->tokens.ptr[k]) {
             ls->tokens.len-= 2;
-            _lex_dump(ls, stdout);
+            _lex_dump(ls, stderr);
         } else printf(format,
                 ls->work.ptr+ls->sources.ptr[ls->sources.len-1].file,
                 ls->sources.ptr[ls->sources.len-1].line,
