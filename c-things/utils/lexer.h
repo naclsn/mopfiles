@@ -243,6 +243,7 @@ static void _lex_ungetc(lex_state* const ls, char const c) {
 }
 
 static void _lex_fclose(lex_state* const ls) {
+    ls->gotc = '\0';
     if (stdin != curr->stream) fclose(curr->stream);
     curr->stream = NULL;
     if (1 < ls->sources.len) --ls->sources.len;
@@ -377,7 +378,7 @@ static size_t _lex_ahead(lex_state* const ls) {
     return token_at;
 }
 
-static long _lex_eval_zero(lex_state* const ls);
+static long _lex_eval_top(lex_state* const ls);
 
 static long _lex_eval_one(lex_state* const ls) {
     size_t const token_at = lext(ls);
@@ -388,7 +389,7 @@ static long _lex_eval_one(lex_state* const ls) {
     case'\'': return r.l = 0, lex_struqo(r.b, sizeof r.b, token), r.l; // xxx: little endian
     case '+': return +_lex_eval_one(ls);
     case '-': return -_lex_eval_one(ls);
-    case '(': return (_lex_eval_zero(ls));
+    case '(': return (_lex_eval_top(ls));
     }
     if (isnum(*token)) return atol(token);
     if (!strcmp("defined", token)) {
@@ -406,7 +407,7 @@ static long _lex_eval_one(lex_state* const ls) {
     return 0;
 }
 
-static long _lex_eval_two(lex_state* const ls, long const lhs, size_t const op_at) {
+static long _lex_eval_two(lex_state* const ls, long const lhs, size_t const op_at, int* const is_qu) {
     long rhs = _lex_eval_one(ls);
     size_t const nop_at = lext(ls);
 
@@ -414,14 +415,7 @@ static long _lex_eval_two(lex_state* const ls, long const lhs, size_t const op_a
 #   define hash1(op) (((op)[0]|(op)[1]<<8)%35)
     int const hop = hash1(ls->tokens.ptr+op_at);
     int then = 0;
-    char const c = ls->tokens.ptr[nop_at];
-    if (c && ')' != c && ':' != c) {
-        if ('?' == c) {
-            // xxx: pretty sure precedence is wrong but again you shouldn't have such complicated expression in your `#if`s
-            long const consequence = _lex_eval_zero(ls), alternative = _lex_eval_zero(ls);
-            return lhs ? consequence : alternative;
-        }
-
+    if (ls->tokens.ptr[nop_at] && !strchr("?:)", ls->tokens.ptr[nop_at])) {
         static char const prec[] = {
             [hash2('|','|')]=   0,
             [hash2('&','&')]=   1,
@@ -443,9 +437,9 @@ static long _lex_eval_two(lex_state* const ls, long const lhs, size_t const op_a
             [hash2('%','\0')]= 17,
         };
         if (prec[hop] < prec[hash1(ls->tokens.ptr+nop_at)])
-            rhs = _lex_eval_two(ls, rhs, nop_at);
+            rhs = _lex_eval_two(ls, rhs, nop_at, is_qu);
         else then = 1;
-    }
+    } else if ('?' == ls->tokens.ptr[nop_at]) *is_qu = 1;
 #   undef hash1
 
     long r = lhs;
@@ -471,14 +465,23 @@ static long _lex_eval_two(lex_state* const ls, long const lhs, size_t const op_a
     }
 #   undef hash2
 
-    return then ? _lex_eval_two(ls, r, nop_at) : r;
+    return then ? _lex_eval_two(ls, r, nop_at, is_qu) : r;
 }
 
-static long _lex_eval_zero(lex_state* const ls) {
+static long _lex_eval_top(lex_state* const ls) {
     long const lhs = _lex_eval_one(ls);
     size_t const op_at = lext(ls);
 
-    return ls->tokens.ptr[op_at] ? _lex_eval_two(ls, lhs, op_at) : lhs;
+    int is_qu = '?' == ls->tokens.ptr[op_at];
+    long const r = ls->tokens.ptr[op_at] && !strchr("?:)", ls->tokens.ptr[op_at])
+        ? _lex_eval_two(ls, lhs, op_at, &is_qu)
+        : lhs;
+
+    if (is_qu) {
+        long const consequence = _lex_eval_top(ls), alternative = _lex_eval_top(ls);
+        return r ? consequence : alternative;
+    }
+    return r;
 }
 
 static long _lex_eval(lex_state* const ls) {
@@ -486,7 +489,7 @@ static long _lex_eval(lex_state* const ls) {
     size_t const plen = ls->tokens.len;
     ls->nlend = 1;
 
-    long const r = _lex_eval_zero(ls);
+    long const r = _lex_eval_top(ls);
 
     ls->nlend = 0;
     ls->tokens.len = plen;
@@ -1019,14 +1022,13 @@ size_t lext(lex_state* const ls) {
         char const* const blanks = ls->nlend ? blankchrs : nlchrs blankchrs;
         while (strchr(blanks, c = _lex_getc(ls)));
         if ('\n' == c) return eof_token;
+        _lex_ungetc(ls, c);
 
         if (endd) {
             if (ls->cstream) return eof_token;
             _lex_fclose(ls);
             return lext(ls);
         }
-
-        _lex_ungetc(ls, c);
 
         if (pline && '#' == c && !ls->noxid && ('\0' == ls->tokens.ptr[ls->tokens.len-2] || pline != curr->line)) {
             _lex_directive(ls);
