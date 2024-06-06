@@ -42,6 +42,8 @@
 
 // ---
 
+#if 0 // example
+
 typedef vec(2, f) vec2f;
 typedef vec(2, i) vec2i;
 typedef vec(3, f) vec3f;
@@ -59,3 +61,4 @@ void bidoof(void) {
     //vec2i bla = vcvt(2, r.c);
 }
 
+#endif // example

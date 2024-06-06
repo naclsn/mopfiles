@@ -91,6 +91,8 @@
 
 // ---
 
+#if 0 // example
+
 co_declare(uno);
 co_declare(dos);
 co_declare(tres);
@@ -143,3 +145,5 @@ int main(void) {
     //co_consume(rep_example, .n= 3) puts("---");
     co_consume(par_example, 0) puts("---");
 }
+
+#endif // example

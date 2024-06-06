@@ -224,7 +224,7 @@ struct Frame { extends_FrameBase
     GLXContext glc;
 };
 
-#if 1//def FRAME_IMPLEMENTATION
+#ifdef FRAME_IMPLEMENTATION
 
 static volatile unsigned char _errreceived = 0;
 int _errhandler(Display* dpy, XErrorEvent* err) {

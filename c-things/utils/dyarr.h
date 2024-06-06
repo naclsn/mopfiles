@@ -24,7 +24,6 @@ static inline void* _grow(char** const ptr, size_t* const len, size_t* const cap
 #endif
 
     ```
-
 */
 
 #include <stdbool.h>
