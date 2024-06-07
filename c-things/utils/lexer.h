@@ -951,7 +951,17 @@ static void _lex_expand_id_here(lex_state* const ls, size_t const token_at) {
 
             ls->work.len = args.ptr[0]-2;
             frry(&args);
-        }
+        } // function-like
+
+        else for (size_t now_at = token_at, end_at = token_at+macro->length; now_at < end_at;) {
+            if ('#' == ls->tokens.ptr[now_at] && '#' == ls->tokens.ptr[now_at+1]) {
+                // aaa @ ## @ bbb @  ->  aaabbb @
+                grow(&ls->tokens, now_at+3, -4);
+                --now_at;
+                end_at-= 4;
+            }
+            now_at+= strlen(ls->tokens.ptr+now_at)+1;
+        } // object-like
 
         ls->ahead = ls->tokens.len - token_at;
         macro->marked = 1;
