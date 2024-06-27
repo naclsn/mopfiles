@@ -33,7 +33,7 @@
 /// Won't-fixes:
 /// - Doesn't "fail" on broken input, you just get broken output (eg. `#aa` in
 ///   a macro but `aa` isn't a parameter, will be `"aa"`)
-/// - By default ignores issing files: it just continues as if the included
+/// - By default ignores missing files: it just continues as if the included
 ///   file had been empty; but does EOF on `#error`
 /// - Allocates using `realloc` and `exit`s on OOM; ig you could provide your
 ///   own fix-size work area by setting all the `.ptr` and maxing `.cap` of
@@ -85,6 +85,18 @@ size_t lex_struqo(char* const unquoted, size_t const size, char const* const quo
 size_t lex_getline(char* const res, size_t const size, char const* const file, size_t const line);
 
 #define arry(...) struct { __VA_ARGS__* ptr; size_t len, cap; }
+#define frry(__a) (free((__a)->cap ? (__a)->ptr : NULL), (__a)->ptr = NULL, (__a)->len = (__a)->cap = 0)
+#define push(__a) ((__a)->len < (__a)->cap || (((__a)->cap || !(__a)->ptr) && ((__a)->ptr = realloc((__a)->ptr, ((__a)->cap+= (__a)->cap+8)*sizeof*(__a)->ptr))) ? (__a)->ptr+(__a)->len++ : (exit(EXIT_FAILURE), (__a)->ptr))
+#define grow(__a, __k, __n) _lex_arrygrow((char**)&(__a)->ptr, &(__a)->len, &(__a)->cap, sizeof*(__a)->ptr, (__k), (__n))
+#define last(__a) ((__a)->ptr+(__a)->len-1)
+#define each(__a) for (void* const _ptr = (__a)->ptr,* const _end = (__a)->ptr+(__a)->len; _end == (__a)->ptr ? (__a)->ptr = _ptr, 0 : 1; ++(__a)->ptr)
+static char* _lex_arrygrow(char** const ptr, size_t* const len, size_t* const cap, size_t const s, size_t const k, size_t const n) {
+    if (!n) return *ptr+k*s;
+    size_t const nlen = *len+n;
+    if (*cap < nlen && !(cap && (*ptr = (char*)realloc(*ptr, (*cap = nlen)*s)))) exit(EXIT_FAILURE);
+    if (k < *len) memmove(*ptr+(k+n)*s, *ptr+k*s, (*len-k)*s);
+    return *len = nlen, *ptr+k*s;
+}
 
 struct lex_state {
     arry(struct lex_macro {
@@ -119,19 +131,6 @@ struct lex_state {
 };
 
 #ifdef LEXER_H_IMPLEMENTATION
-
-#define frry(__a) (free((__a)->cap ? (__a)->ptr : NULL), (__a)->ptr = NULL, (__a)->len = (__a)->cap = 0)
-#define push(__a) ((__a)->len < (__a)->cap || (((__a)->cap || !(__a)->ptr) && ((__a)->ptr = realloc((__a)->ptr, ((__a)->cap+= (__a)->cap+8)*sizeof*(__a)->ptr))) ? (__a)->ptr+(__a)->len++ : (exit(EXIT_FAILURE), (__a)->ptr))
-#define grow(__a, __k, __n) _lex_arrygrow((char**)&(__a)->ptr, &(__a)->len, &(__a)->cap, sizeof*(__a)->ptr, (__k), (__n))
-#define last(__a) ((__a)->ptr+(__a)->len-1)
-#define each(__a) for (void* const _ptr = (__a)->ptr,* const _end = (__a)->ptr+(__a)->len; _end == (__a)->ptr ? (__a)->ptr = _ptr, 0 : 1; ++(__a)->ptr)
-static char* _lex_arrygrow(char** const ptr, size_t* const len, size_t* const cap, size_t const s, size_t const k, size_t const n) {
-    if (!n) return *ptr+k*s;
-    size_t const nlen = *len+n;
-    if (*cap < nlen && !(cap && (*ptr = realloc(*ptr, (*cap = nlen)*s)))) exit(EXIT_FAILURE);
-    if (k < *len) memmove(*ptr+(k+n)*s, *ptr+k*s, (*len-k)*s);
-    return *len = nlen, *ptr+k*s;
-}
 
 // everything between / * and * / or // and newline, 0-terminated, no newline
 #ifndef on_lex_comment
@@ -1261,11 +1260,14 @@ size_t lex_getline(char* const res, size_t const size, char const* const file, s
 #undef endd
 #undef curr
 
+#ifndef LEXER_H_KEEP_ARRY
 #undef each
 #undef last
 #undef grow
 #undef push
 #undef frry
+#undef arry
+#endif // LEXER_H_KEEP_ARRY
 
 #endif // LEXER_H_IMPLEMENTATION
 
