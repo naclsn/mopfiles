@@ -10,3 +10,4 @@ endif
 trem: trem.c; $(CC) $< -o $@ $(CFLAGS) $(frame-LDFLAGS)
 moins: moins.c; $(CC) $< -o $@ $(CFLAGS)
 makeshift: makeshift.c; $(CC) $< -o $@ $(CFLAGS)
+uh: uh.c; $(CC) $< -o $@ $(CFLAGS)
