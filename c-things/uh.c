@@ -24,10 +24,10 @@ static char* _arrygrow(char** const ptr, size_t* const len, size_t* const cap, s
 }
 // }}}
 
-#define term stderr
+#define term stdout
 
 // uses/requires termios {{{
-#define TERM STDERR_FILENO
+#define TERM STDOUT_FILENO
 struct termios ini_tios, raw_tios;
 #define set_ini_tios() tcsetattr(TERM, TCSANOW, &ini_tios)
 #define set_raw_tios() tcsetattr(TERM, TCSANOW, &raw_tios)
@@ -68,6 +68,8 @@ size_t char_to_mark(char const c) {
     if (('a' <= c && c <= 'z') || ('A' <= c && c <= 'Z')) return (c|32)-'a'+1;
     switch (c) {
     case '.': return __LINE__-sizeof(struct _IOTA_NALPH_MARK);
+    case '(': return __LINE__-sizeof(struct _IOTA_NALPH_MARK);
+    case ')': return __LINE__-sizeof(struct _IOTA_NALPH_MARK);
     case'\'': return __LINE__-sizeof(struct _IOTA_NALPH_MARK);
     case '[': return __LINE__-sizeof(struct _IOTA_NALPH_MARK);
     case ']': return __LINE__-sizeof(struct _IOTA_NALPH_MARK);
@@ -92,9 +94,19 @@ struct state {
 
     size_t vis_buf;
     arry(char) typeahead;
+
+    short unsigned rows, cols;
 } uh = {0};
 
 #define visible (uh.bufs.ptr+uh.vis_buf)
+#define markk(__c) (visible->marks+char_to_mark(__c))
+#define cursor markk('.')
+// }}}
+
+// term/cursor functions (sig unsafe, 0-based) {{{
+void cu_goto(short unsigned row, short unsigned col) {
+    fprintf(term, "\x1b[%hu;%huH", row+1, col+1);
+}
 // }}}
 
 // somewhat misc {{{
@@ -106,20 +118,27 @@ void cleanup(void) {
     frry(&uh.bufs);
 
     frry(&uh.typeahead);
-    struct _ { char exhaustive_cleanup_check[56 == sizeof uh ? 1 : -1]; };
+    struct _ { char exhaustive_cleanup_check[64 == sizeof uh ? 1 : -1]; };
 
     set_ini_tios();
 }
 
 void signaled(int const signum) {
 #define __do(__s) _##__s= __s,
-    switch ((enum caught { caught_sigs(__do) })signum) {
+    switch ((enum { caught_sigs(__do) })signum) {
 #undef __do
     case _SIGINT:
         set_ini_tios();
+        exit(EXIT_FAILURE);
         break;
 
     case _SIGWINCH:
+        uh.rows = uh.cols = 0;
+        write(TERM, "\x1b[9999;9999H\x1b[6n", 16);
+        char csi[2], c;
+        read(TERM, &csi, 2);
+        while (read(TERM, &c, 1), ';' != c) uh.rows = uh.rows*10 + c-'0';
+        while (read(TERM, &c, 1), 'R' != c) uh.cols = uh.cols*10 + c-'0';
         break;
     }
 }
@@ -182,21 +201,50 @@ int main(int argc, char** argv) {
     set_raw_tios();
     atexit(cleanup);
 
+    signaled(SIGWINCH);
+
     struct buf* const land = push(&uh.bufs);
     if (argc && loadbuf((argc--, *argv++), land))
         land->flags.exists = true;
 
-    for (size_t k = 0; k < visible->text.len; k++)
-        fprintf(term, "%4zu %.*s\r\n", k+1, (unsigned)visible->text.ptr[k].len, visible->text.ptr[k].ptr);
+    {
+        cu_goto(0, 0);
+        unsigned gutter_width = 5; // "%4zu "
 
-    fprintf(term, "%s%s %s%s -- %zu/%zu,%zu\r\n",
-            visible->flags.exists ? "" : "[NEW]",
-            visible->flags.readonly ? "[RO]" : "",
-            visible->flags.modified ? "+" : "",
-            visible->name ? visible->name : "[Scratch]",
-            visible->marks[char_to_mark('.')].ln,
-            visible->text.len,
-            visible->marks[char_to_mark('.')].ch);
+        size_t const first = markk('(')->ln, last = visible->text.len;
+        size_t k_scr, k_txt;
+        for (k_scr = k_txt = 0; k_scr+2 < uh.rows; k_scr++) {
+            if (last <= ++k_txt) break;
+            size_t const full = visible->text.ptr[k_txt].len;
+            unsigned const fits = full < uh.cols-gutter_width ? full : uh.cols-gutter_width;
+            fprintf(term, "%4zu %.*s\r\n", k_scr+1, fits, visible->text.ptr[k_txt].ptr);
+        }
+        markk(')')->ln = first+k_scr;
+
+        fprintf(term, "%s%s %s%s -- %zu/%zu,%zu (%hux%hu)\r\n",
+                visible->flags.exists ? "" : "[NEW]",
+                visible->flags.readonly ? "[RO]" : "",
+                visible->flags.modified ? "+" : "",
+                visible->name ? visible->name : "[Scratch]",
+                cursor->ln, visible->text.len, cursor->ch,
+                uh.rows, uh.cols);
+
+        cu_goto(cursor->ln, cursor->ch+gutter_width);
+        //cu_goto(0, 0);
+    }
+
+    {
+        bool done = false;
+        while (!done) switch (fflush(term), getk()) {
+            case 'h': --cursor->ch; fprintf(term, "\x1b[D"); break;
+            case 'j': ++cursor->ln; fprintf(term, "\x1b[B"); break;
+            case 'k': --cursor->ln; fprintf(term, "\x1b[A"); break;
+            case 'l': ++cursor->ch; fprintf(term, "\x1b[C"); break;
+            case 'q': done = true; break;
+
+            default: fputc('\a', term);
+        }
+    }
 
     return EXIT_SUCCESS;
 }

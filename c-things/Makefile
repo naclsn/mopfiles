@@ -1,3 +1,5 @@
+top:; echo hii
+
 warnings = -Wall -Wextra -Wpedantic -Werror -Wno-unused-function -Wno-unused-variable -Wno-unused-value
 CFLAGS += -ggdb -std=c99 $(warnings)
 
