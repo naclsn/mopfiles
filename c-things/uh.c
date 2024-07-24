@@ -1,10 +1,14 @@
+#define _DEFAULT_SOURCE // sigaction
+
+#include <signal.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <termios.h>
-#include <unistd.h>
+#include <unistd.h> // read/write
 
+// arry {{{
 #define arry(...) struct { __VA_ARGS__* ptr; size_t len, cap; }
 #define frry(__a) (free((__a)->cap ? (__a)->ptr : NULL), (__a)->ptr = NULL, (__a)->len = (__a)->cap = 0)
 #define push(__a) ((__a)->len < (__a)->cap || (((__a)->cap || !(__a)->ptr) && ((__a)->ptr = realloc((__a)->ptr, ((__a)->cap+= (__a)->cap+8)*sizeof*(__a)->ptr))) ? (__a)->ptr+(__a)->len++ : (exit(EXIT_FAILURE), (__a)->ptr))
@@ -18,23 +22,47 @@ static char* _arrygrow(char** const ptr, size_t* const len, size_t* const cap, s
     if (k < *len) memmove(*ptr+(k+n)*s, *ptr+k*s, (*len-k)*s);
     return *len = nlen, *ptr+k*s;
 }
+// }}}
 
-#define TERM STDERR_FILENO
 #define term stderr
 
+// uses/requires termios {{{
+#define TERM STDERR_FILENO
 struct termios ini_tios, raw_tios;
+#define set_ini_tios() tcsetattr(TERM, TCSANOW, &ini_tios)
+#define set_raw_tios() tcsetattr(TERM, TCSANOW, &raw_tios)
 
 bool setup_tios(void) {
-    if (tcgetattr(TERM, &ini_tios)) return 0;
+    if (tcgetattr(TERM, &ini_tios)) return false;
     raw_tios = ini_tios;
     raw_tios.c_iflag&=~(IGNBRK | BRKINT | PARMRK | ISTRIP | INLCR | IGNCR | ICRNL | IXON);
     raw_tios.c_oflag&=~OPOST;
     raw_tios.c_lflag&=~(ECHO | ECHONL | ICANON | ISIG | IEXTEN);
     raw_tios.c_cflag&=~(CSIZE | PARENB);
     raw_tios.c_cflag|= CS8;
-    return 1;
+    return true;
 }
+// }}}
 
+// uses/requires sigaction {{{
+void signaled(int const signum);
+#define caught_sigs(__do) __do(SIGINT)    \
+                          __do(SIGWINCH)
+                        //__do(SIGCONT) ?
+
+bool setup_sigs(void) {
+    struct sigaction sa;
+    sa.sa_handler = signaled;
+    sigemptyset(&sa.sa_mask);
+    sa.sa_flags = SA_RESTART;
+#define __do(__s) sigaction(__s, &sa, NULL);
+    caught_sigs(__do)
+#undef __do
+    return true;
+}
+// }}}
+
+// state definition bits {{{
 struct _IOTA_NALPH_MARK { char _[__LINE__-('z'-'a'+1) +3]; }; // +3: the 3 next lines
 size_t char_to_mark(char const c) {
     if (('a' <= c && c <= 'z') || ('A' <= c && c <= 'Z')) return (c|32)-'a'+1;
@@ -67,7 +95,9 @@ struct state {
 } uh = {0};
 
 #define visible (uh.bufs.ptr+uh.vis_buf)
+// }}}
 
+// somewhat misc {{{
 void cleanup(void) {
     each (&uh.bufs) {
         each (&uh.bufs.ptr->text) frry(uh.bufs.ptr->text.ptr);
@@ -78,7 +108,20 @@ void cleanup(void) {
     frry(&uh.typeahead);
     struct _ { char exhaustive_cleanup_check[56 == sizeof uh ? 1 : -1]; };
 
-    tcsetattr(TERM, TCSANOW, &ini_tios);
+    set_ini_tios();
+}
+
+void signaled(int const signum) {
+#define __do(__s) _##__s= __s,
+    switch ((enum caught { caught_sigs(__do) })signum) {
+#undef __do
+    case _SIGINT:
+        set_ini_tios();
+        break;
+
+    case _SIGWINCH:
+        break;
+    }
 }
 
 char getk(void) {
@@ -130,12 +173,13 @@ bool loadbuf(char const* const path, struct buf* const res) {
 
     return free(aptr), true;
 }
+// }}}
 
 int main(int argc, char** argv) {
     (void)(argc--, argv++);
 
-    if (!setup_tios()) return EXIT_FAILURE;
-    tcsetattr(TERM, TCSANOW, &raw_tios);
+    if (!setup_sigs() || !setup_tios()) return EXIT_FAILURE;
+    set_raw_tios();
     atexit(cleanup);
 
     struct buf* const land = push(&uh.bufs);
