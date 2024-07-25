@@ -79,7 +79,7 @@ size_t char_to_mark(char const c) {
 struct _NB_MARKS { char _[__LINE__-sizeof(struct _IOTA_NALPH_MARK) -3];}; // -3: the 3 previous lines
 #define NB_MARKS (sizeof(struct _NB_MARKS))
 
-struct state {
+struct {
     arry(struct buf {
         char const* name;
         arry(arry(char)) text;
@@ -96,17 +96,26 @@ struct state {
     arry(char) typeahead;
 
     short unsigned rows, cols;
+
+    struct state {
+        enum {
+            STARTING,
+            QUITTING,            // extra: status
+            NEED_RESIZE,         // extra: next
+            NEED_REDRAW,         // extra: next
+            USER_PENDING,
+            USER_READLINE_EN,    // extra: next
+            USER_READLINE_TY,    // extra: next
+            USER_READLINE_EX,    // extra: next
+        } tag;
+        size_t extra;
+    } state;
 } uh = {0};
 
 #define visible (uh.bufs.ptr+uh.vis_buf)
 #define markk(__c) (visible->marks+char_to_mark(__c))
 #define cursor markk('.')
-// }}}
-
-// term/cursor functions (sig unsafe, 0-based) {{{
-void cu_goto(short unsigned row, short unsigned col) {
-    fprintf(term, "\x1b[%hu;%huH", row+1, col+1);
-}
+#define xstate(__s, __x) (uh.state = (struct state){(__s), (__x)})
 // }}}
 
 // somewhat misc {{{
@@ -118,7 +127,7 @@ void cleanup(void) {
     frry(&uh.bufs);
 
     frry(&uh.typeahead);
-    struct _ { char exhaustive_cleanup_check[64 == sizeof uh ? 1 : -1]; };
+    struct _ { char exhaustive_cleanup_check[80 == sizeof uh ? 1 : -1]; };
 
     set_ini_tios();
 }
@@ -127,19 +136,8 @@ void signaled(int const signum) {
 #define __do(__s) _##__s= __s,
     switch ((enum { caught_sigs(__do) })signum) {
 #undef __do
-    case _SIGINT:
-        set_ini_tios();
-        exit(EXIT_FAILURE);
-        break;
-
-    case _SIGWINCH:
-        uh.rows = uh.cols = 0;
-        write(TERM, "\x1b[9999;9999H\x1b[6n", 16);
-        char csi[2], c;
-        read(TERM, &csi, 2);
-        while (read(TERM, &c, 1), ';' != c) uh.rows = uh.rows*10 + c-'0';
-        while (read(TERM, &c, 1), 'R' != c) uh.cols = uh.cols*10 + c-'0';
-        break;
+    case _SIGINT:   xstate(QUITTING, 2);               break;
+    case _SIGWINCH: xstate(NEED_RESIZE, uh.state.tag); break;
     }
 }
 
@@ -194,6 +192,96 @@ bool loadbuf(char const* const path, struct buf* const res) {
 }
 // }}}
 
+// term/cursor functions, redraw functions {{{
+void cu_goto(short unsigned row, short unsigned col) {
+    fprintf(term, "\x1b[%hu;%huH", row+1, col+1);
+}
+
+void repos_cursor(void) {
+    static unsigned const gutter_width = 5; // "%4zu "
+    cu_goto(cursor->ln, cursor->ch+gutter_width);
+}
+
+void redraw_status(void) {
+    cu_goto(uh.rows-2, 0);
+
+    char posinfo[64];
+    int const posinfo_len = sprintf(posinfo, "%zu/%zu,%zu",
+            cursor->ln+1, visible->text.len, cursor->ch+1);
+    int const nameinfo_len = fprintf(term, "%s%s%s%s",
+            visible->name ? visible->name : "[Scratch]",
+            visible->flags.modified ? "+" : "",
+            visible->flags.exists ? "" : "[NEW]",
+            visible->flags.readonly ? "[RO]" : "");
+    fprintf(term, "%*s%s\r\n",
+            uh.cols-nameinfo_len-posinfo_len, "",
+            posinfo);
+}
+
+void redraw_screen(void) {
+    static unsigned const gutter_width = 5; // "%4zu "
+
+    cu_goto(0, 0);
+
+    size_t const first = markk('(')->ln, last = visible->text.len;
+    size_t k_scr, k_txt;
+    for (k_scr = k_txt = 0; k_scr+2 < uh.rows; k_scr++) {
+        if (last <= k_txt+1) break;
+        size_t const full = visible->text.ptr[k_txt].len;
+        unsigned const fits = full < uh.cols-gutter_width ? full : uh.cols-gutter_width;
+        fprintf(term, "%4zu %.*s\r\n", k_scr+1, fits, visible->text.ptr[k_txt].ptr);
+        ++k_txt;
+    }
+    markk(')')->ln = first+k_scr;
+
+    while (k_scr+2 < uh.rows) fprintf(term, "%4zu~\r\n", ++k_scr);
+
+    redraw_status();
+}
+// }}}
+
+// switch key functions {{{
+void movment_key(char const key) {
+    size_t *const ln = &cursor->ln, *const ch = &cursor->ch;
+    size_t const mln = visible->text.len, mch = visible->text.ptr[*ln].len;
+
+    switch (key) default: {
+
+        if (0) {
+            if (0) case 'h': if (*ch)         --*ch, fprintf(term, "\x1b[D");
+            if (0) case 'j': if (*ln < mln-1) ++*ln, fprintf(term, "\x1b[B");
+            if (0) case 'k': if (*ln)         --*ln, fprintf(term, "\x1b[A");
+            if (0) case 'l': if (*ch < mch-1) ++*ch, fprintf(term, "\x1b[C");
+
+            if (visible->text.ptr[*ln].len <= *ch)
+                *ch = visible->text.ptr[*ln].len ? visible->text.ptr[*ln].len-1 : 0;
+        }
+
+    }
+}
+
+void normal_key(char const key) {
+    switch (key) default: {
+        movment_key(key);
+        redraw_status();
+        repos_cursor();
+
+        if (0) {
+        case CTRL('Z'): kill(0, SIGTSTP);
+        case CTRL('L'): xstate(NEED_REDRAW, uh.state.tag);
+        }
+
+        if (0) {
+        case CTRL('C'): xstate(QUITTING, 0);
+        }
+
+        if (0) {
+        case ':': case '/': case '?': xstate(USER_READLINE_EN, key);
+        }
+    }
+}
+// }}}
+
 int main(int argc, char** argv) {
     (void)(argc--, argv++);
 
@@ -201,50 +289,45 @@ int main(int argc, char** argv) {
     set_raw_tios();
     atexit(cleanup);
 
-    signaled(SIGWINCH);
-
     struct buf* const land = push(&uh.bufs);
     if (argc && loadbuf((argc--, *argv++), land))
         land->flags.exists = true;
 
-    {
-        cu_goto(0, 0);
-        unsigned gutter_width = 5; // "%4zu "
+    while (1) switch (uh.state.tag) default: {
+        xstate(QUITTING, 3);
 
-        size_t const first = markk('(')->ln, last = visible->text.len;
-        size_t k_scr, k_txt;
-        for (k_scr = k_txt = 0; k_scr+2 < uh.rows; k_scr++) {
-            if (last <= ++k_txt) break;
-            size_t const full = visible->text.ptr[k_txt].len;
-            unsigned const fits = full < uh.cols-gutter_width ? full : uh.cols-gutter_width;
-            fprintf(term, "%4zu %.*s\r\n", k_scr+1, fits, visible->text.ptr[k_txt].ptr);
+        if (0) case STARTING: {
+            xstate(NEED_RESIZE, USER_PENDING);
         }
-        markk(')')->ln = first+k_scr;
 
-        fprintf(term, "%s%s %s%s -- %zu/%zu,%zu (%hux%hu)\r\n",
-                visible->flags.exists ? "" : "[NEW]",
-                visible->flags.readonly ? "[RO]" : "",
-                visible->flags.modified ? "+" : "",
-                visible->name ? visible->name : "[Scratch]",
-                cursor->ln, visible->text.len, cursor->ch,
-                uh.rows, uh.cols);
+        if (0) case QUITTING: {
+            exit(uh.state.extra);
+        }
 
-        cu_goto(cursor->ln, cursor->ch+gutter_width);
-        //cu_goto(0, 0);
-    }
+        if (0) case NEED_RESIZE: {
+            uh.rows = uh.cols = 0;
+            write(TERM, "\x1b[9999;9999H\x1b[6n", 16);
+            char csi[2], c;
+            read(TERM, &csi, 2);
+            while (read(TERM, &c, 1), ';' != c) uh.rows = uh.rows*10 + c-'0';
+            while (read(TERM, &c, 1), 'R' != c) uh.cols = uh.cols*10 + c-'0';
 
-    {
-        bool done = false;
-        while (!done) switch (fflush(term), getk()) {
-            case 'h': --cursor->ch; fprintf(term, "\x1b[D"); break;
-            case 'j': ++cursor->ln; fprintf(term, "\x1b[B"); break;
-            case 'k': --cursor->ln; fprintf(term, "\x1b[A"); break;
-            case 'l': ++cursor->ch; fprintf(term, "\x1b[C"); break;
-            case 'q': done = true; break;
+        case NEED_REDRAW:
+            redraw_screen();
+            repos_cursor();
+            xstate(uh.state.extra, 0);
+        }
 
-            default: fputc('\a', term);
+        if (0) case USER_PENDING: {
+            fflush(term);
+            normal_key(getk());
+        }
+
+        if (0) case USER_READLINE_EN: {
+            xstate(QUITTING, 42); // NIY
         }
     }
 
+    // (unreachable)
     return EXIT_SUCCESS;
 }
