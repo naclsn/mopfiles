@@ -190,6 +190,34 @@ bool loadbuf(char const* const path, struct buf* const res) {
 
     return free(aptr), true;
 }
+
+bool move_prev_char(bool* const nl) {
+    size_t *const ln = &cursor->ln, *const ch = &cursor->ch;
+    *nl = false;
+    if (!(*ch)--) {
+        if (!(*ln)--) {
+            *ch = *ln = 0;
+            return false;
+        }
+        *ch = visible->text.ptr[*ln].len-1;
+        *nl = true;
+    }
+    return true;
+}
+
+bool move_next_char(bool* const nl) {
+    size_t *const ln = &cursor->ln, *const ch = &cursor->ch;
+    *nl = false;
+    if (visible->text.ptr[*ln].len <= ++*ch) {
+        if (visible->text.len <= ++*ln) {
+            --*ch, --*ln;
+            return false;
+        }
+        *ch = 0;
+        *nl = true;
+    }
+    return true;
+}
 // }}}
 
 // term/cursor functions, redraw functions {{{
@@ -226,7 +254,7 @@ void redraw_screen(void) {
     size_t const first = markk('(')->ln, last = visible->text.len;
     size_t k_scr, k_txt;
     for (k_scr = k_txt = 0; k_scr+2 < uh.rows; k_scr++) {
-        if (last <= k_txt+1) break;
+        if (last <= k_txt) break;
         size_t const full = visible->text.ptr[k_txt].len;
         unsigned const fits = full < uh.cols-gutter_width ? full : uh.cols-gutter_width;
         fprintf(term, "%4zu %.*s\r\n", k_scr+1, fits, visible->text.ptr[k_txt].ptr);
@@ -243,21 +271,77 @@ void redraw_screen(void) {
 // switch key functions {{{
 void movment_key(char const key) {
     size_t *const ln = &cursor->ln, *const ch = &cursor->ch;
-    size_t const mln = visible->text.len, mch = visible->text.ptr[*ln].len;
+#   define mln (visible->text.len)
+#   define mch (visible->text.ptr[*ln].len)
+#   define atc (visible->text.ptr[*ln].ptr[*ch])
 
     switch (key) default: {
 
         if (0) {
-            if (0) case 'h': if (*ch)         --*ch, fprintf(term, "\x1b[D");
-            if (0) case 'j': if (*ln < mln-1) ++*ln, fprintf(term, "\x1b[B");
-            if (0) case 'k': if (*ln)         --*ln, fprintf(term, "\x1b[A");
-            if (0) case 'l': if (*ch < mch-1) ++*ch, fprintf(term, "\x1b[C");
+            if (0) case 'h': if (*ch)         --*ch;
+            if (0) case 'j': if (*ln < mln-1) ++*ln;
+            if (0) case 'k': if (*ln)         --*ln;
+            if (0) case 'l': if (*ch < mch-1) ++*ch;
 
-            if (visible->text.ptr[*ln].len <= *ch)
-                *ch = visible->text.ptr[*ln].len ? visible->text.ptr[*ln].len-1 : 0;
+            if (mch <= *ch)
+                *ch = mch ? mch-1 : 0;
         }
 
+#       define wordchar(__c) ('_' == (__c) ||  \
+            ('0' <= (__c) && (__c) <= '9') ||  \
+            ('A' <= (__c) && (__c) <= 'Z') ||  \
+            ('a' <= (__c) && (__c) <= 'z') )
+#       define blankchar(__c) (' ' == (__c) || '\t' == (__c))
+
+        if (0) {
+
+            bool nl;
+
+            if (0) case 'w': case 'W': {
+                if (mch && !blankchar(atc)) {
+                    bool const firstwc = wordchar(atc);
+                    while (move_next_char(&nl) && !nl && (!(key&32) || firstwc == wordchar(atc)) && !blankchar(atc));
+                } else nl = !mch;
+                bool atend = false;
+                if (nl)
+                    do if ((atend = mln-1 == *ln)) break;
+                    while (++*ln, !mch);
+                if (!atend) while (blankchar(atc) && move_next_char(&nl) && nl);
+            }
+
+            if (0) case 'e': case 'E': {
+                nl = false;
+                while ((nl ? nl = false, true : move_next_char(&nl)) && (nl || blankchar(atc)));
+                bool const firstwc = wordchar(atc);
+                bool outnotmv;
+                while ((outnotmv = move_next_char(&nl)) && !nl && (key&32 ? firstwc == wordchar(atc) : !blankchar(atc)));
+                if (outnotmv) move_prev_char(&nl);
+            }
+
+            if (0) case 'b': case 'B': {
+                nl = false;
+                while ((nl ? nl = false, true : move_prev_char(&nl)) && (nl || blankchar(atc)));
+                if (nl) move_next_char(&nl);
+                bool const firstwc = wordchar(atc);
+                bool outnotmv;
+                while ((outnotmv = move_prev_char(&nl)) && !nl && (key&32 ? firstwc == wordchar(atc) : !blankchar(atc)));
+                if (outnotmv) move_next_char(&nl);
+            }
+
+        }
+
+        if (0) case '0': *ch = 0;
+        if (0) case '$': *ch = visible->text.ptr[*ln].len-1;
+        if (0) case '^': case '_': for (*ch = 0; *ch < mch && blankchar(atc); ++*ch);
+
+#       undef wordchar
+#       undef blankchar
+
     }
+
+#   undef mch
+#   undef mln
+#   undef atc
 }
 
 void normal_key(char const key) {
@@ -324,6 +408,12 @@ int main(int argc, char** argv) {
         }
 
         if (0) case USER_READLINE_EN: {
+            cu_goto(uh.rows-1, 0);
+            fputc(uh.state.extra, term);
+            xstate(USER_READLINE_TY, uh.state.extra);
+        }
+
+        if (0) case USER_READLINE_TY: {
             xstate(QUITTING, 42); // NIY
         }
     }
