@@ -1,3 +1,4 @@
+import inspect
 import pprint
 import typing
 
@@ -37,7 +38,16 @@ def snap(path: str, obj: object, /, *, prettyprint: bool = True):
 
 
 class AssertSnapMixin:
-    def assertSnap(self: ..., path: str, obj: object, /, *, prettyprint: bool = True):
+    _snap_counters = dict()  # type: dict[str, int]
+
+    def assertSnapAt(
+        self: ...,
+        path: str,
+        obj: object,
+        /,
+        *,
+        prettyprint: bool = True,
+    ):
         hey = object()
         pmax = getattr(self, "maxDiff", hey)
         self.maxDiff = None
@@ -49,3 +59,14 @@ class AssertSnapMixin:
             del self.maxDiff
         else:
             self.maxDiff = pmax
+
+    def assertSnap(self, obj: object, /, *, prettyprint: bool = True):
+        fn = next(
+            it.function
+            for it in inspect.stack()
+            if it.function.startswith("test_")
+        )
+        name = f"{type(self).__name__}.{fn}"
+        count = AssertSnapMixin._snap_counters.get(name, 0) + 1
+        AssertSnapMixin._snap_counters[name] = count
+        self.assertSnapAt(f"{name}_{count}.txt", obj, prettyprint=prettyprint)
