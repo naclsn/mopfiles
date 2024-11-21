@@ -10,28 +10,54 @@ import threading
 _instance = None
 _lock = threading.Lock()
 
+# TODO: I think the connection got closed when doing `(Pdb) n`
 
-def _rtdb(cls: type, srv: socket.socket, frame: "object | None"):
-    conn = srv.accept()[0]
+
+def _rtdb(cls: type, srv: socket.socket, frame: "object | None", mt: bool):
+    conn, addr = srv.accept()
     io = conn.makefile("rw")
-    close = lambda: (io.close(), conn.close(), srv.close())
+    print(f"Connection established with {addr}")
 
-    global _instance
-    with _lock:
-        _instance = cls(stdin=io, stdout=io)
-    _instance.postloop = close
-    _instance.set_trace(frame)
+    def close():
+        print("Connection terminated")
+
+        io.close()
+        conn.close()
+        srv.close()
+
+        global _instance
+        if mt:
+            with _lock:
+                _instance = None
+        else:
+            _instance = None
+
+    try:
+        db = cls(stdin=io, stdout=io)
+        db.postloop = close
+
+        global _instance
+        if mt:
+            with _lock:
+                _instance = db
+        else:
+            _instance = db
+
+        db.set_trace(frame)
+
+    except Exception as e:
+        print(f"Could not start debugger: {e}")
+        close()
 
 
 def _rtdb_hookfn():
     if not _lock.acquire(blocking=False):
         return
 
+    global _instance
     if _instance is not None:
         _lock.release()
         return
-
-    global _instance
     _instance = object()  # placeholder
 
     frame = sys._getframe(2) if hasattr(sys, "_getframe") else None
@@ -50,12 +76,17 @@ def _rtdb_hookfn():
         srv.bind(("localhost", port))
         srv.listen(1)
 
-        th = threading.Thread(target=_rtdb, args=(cls, srv, frame))
-        th.start()
+        mt = bool(os.getenv("PYTHONBREAKPOINT_MT", False))
+
+        args = (cls, srv, frame, mt)
+        if mt:
+            threading.Thread(target=_rtdb, args=args).start()
+        else:
+            _rtdb(*args)
         print(f"Debugger listening on {port} (using {module})")
 
     except Exception as e:
-        print(f"Could not start debugger: {e}")
+        print(f"Could not setup debugging: {e}")
         srv.close()
         _instance = None
 
@@ -76,10 +107,11 @@ with open("/tmp/wip.pid", "w") as pid:
 
 # ---
 
+import common
+import time
+
 hello = 0
 while True:
-    import time
-
-    print("hello", hello)
+    print("hello", hello, common.a)
     time.sleep(1)
     hello += 1
