@@ -21,6 +21,7 @@ from io import IOBase
 from json import load, loads
 from pprint import pprint
 from sys import argv
+from urllib.parse import parse_qs, urlparse
 
 
 class Sayrver(BaseHTTPRequestHandler):
@@ -30,6 +31,9 @@ class Sayrver(BaseHTTPRequestHandler):
     class request:
         method: str
         path: str
+        params: str
+        query: "dict[str, list[str]]"
+        fragment: str
         headers: "list[tuple[str, str]]"
 
     class content:
@@ -48,7 +52,17 @@ class Sayrver(BaseHTTPRequestHandler):
             return self.rfile.read(read)
 
     def do(self, method: str):
-        pprint(Sayrver.request(method, self.path, self.headers.items()))
+        parts = urlparse(self.path)
+        pprint(
+            Sayrver.request(
+                method,
+                parts.path,
+                parts.params,
+                parse_qs(parts.query),
+                parts.fragment,
+                self.headers.items(),
+            )
+        )
 
         length = int(self.headers.get("Content-Length", 0))
         if length:
