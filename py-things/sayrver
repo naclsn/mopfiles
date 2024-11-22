@@ -1,0 +1,119 @@
+#!/usr/bin/env python3
+"""
+Usage: sayrver <addr>:<port>
+            or <addr> <port>
+            or :<port>
+       (defaults to ":8080")
+
+This is a really small, no dependencies, Python server that
+simply prints out everything from the requests it gets and
+reply with a predetermined response.
+
+The initial response is b"hi :3" (as 'text/plain'). To
+change it, press ^C once. If the input looks like a valid
+JSON it will be set to use 'application/json'. Pressing ^C
+twice will stop the program.
+"""
+
+from dataclasses import dataclass
+from http.server import BaseHTTPRequestHandler, HTTPServer
+from io import IOBase
+from json import load, loads
+from pprint import pprint
+from sys import argv
+
+
+class Sayrver(BaseHTTPRequestHandler):
+    reply: "tuple[str, bytes]" = ("text/plain", b"hi :3")
+
+    @dataclass(frozen=True)
+    class request:
+        method: str
+        path: str
+        headers: "list[tuple[str, str]]"
+
+    class content:
+        def __init__(self, length: int, rfile: IOBase):
+            self.total = self.left = length
+            self.rfile = rfile
+
+        def readable(self):
+            return True
+
+        def read(self, size: int | None = None, /) -> bytes:
+            if not size or size < 0:
+                return self.rfile.read(self.left)
+            read = min(size, self.left)
+            self.left -= read
+            return self.rfile.read(read)
+
+    def do(self, method: str):
+        pprint(Sayrver.request(method, self.path, self.headers.items()))
+
+        length = int(self.headers.get("Content-Length", 0))
+        if length:
+            content = Sayrver.content(length, self.rfile)
+            match self.headers.get("Content-Type", "").split(";")[0].strip():
+                case "application/json":
+                    pprint(load(content))
+                case "application/x-www-form-urlencoded":
+                    pprint(
+                        [
+                            tuple(map(bytes.decode, pair.split(b"=")))
+                            for pair in content.read().split(b"&")
+                        ]
+                    )
+                case "text/plain":
+                    pprint(content.read())
+                case _:
+                    print(repr(content.read(120)))
+                    if 120 < length:
+                        print(f"(total {length} bytes)")
+
+        self.send_response(200)
+        self.send_header("Content-Type", Sayrver.reply[0])
+        self.end_headers()
+        self.wfile.write(Sayrver.reply[1])
+
+        print("===")
+
+    def do_GET(self):
+        self.do("GET")
+
+    def do_POST(self):
+        self.do("POST")
+
+    def do_HEAD(self):
+        self.do("HEAD")
+
+
+if ["-h"] == argv[1:]:
+    print(__doc__)
+    exit(1)
+
+
+while 1:
+    try:
+        arg = ":".join(argv[1:] or ["", "8080"])
+        print("listening on", arg)
+        name, port = arg.split(":")
+
+        HTTPServer(
+            server_address=(name, int(port)),
+            RequestHandlerClass=Sayrver,
+        ).serve_forever()
+
+    except KeyboardInterrupt:
+        print(f"urrent reply ({Sayrver.reply[0]}):", Sayrver.reply[1])
+        try:
+            usr = input("new reply: ")
+        except KeyboardInterrupt:
+            exit()
+        if usr:
+            try:
+                loads(usr)
+                Sayrver.reply = ("application/json", usr.encode())
+            except:
+                Sayrver.reply = ("text/plain", usr.encode())
+        else:
+            print("unchanged")

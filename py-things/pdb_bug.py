@@ -5,7 +5,7 @@ def _db():
     # from here {
 
     # Leaving socket.socket.__repr__ as is messes the debugger in some way:
-    #     $ py bug-1.py
+    #     $ py pdb_bug.py
     #     --Call--
     #     > /usr/lib64/python3.10/socket.py(243)__repr__()
     #     -> def __repr__(self):
@@ -16,14 +16,14 @@ def _db():
     #del socket.socket.__repr__
 
     # Using this shows an extra line, then behave normally:
-    #     $ py bug-1.py
+    #     $ py pdb_bug.py
     #     
     #     --Return--
-    #     > /data/sel/Documents/Projects/mopfiles/bug-1.py(39)<module>()->None
+    #     > /data/sel/Documents/Projects/mopfiles/pdb_bug.py(39)<module>()->None
     #     -> breakpoint()
     #     (Pdb) 
     #     Traceback (most recent call last):
-    #       File "/data/sel/Documents/Projects/mopfiles/bug-1.py", line 39, in <module>
+    #       File "/data/sel/Documents/Projects/mopfiles/pdb_bug.py", line 39, in <module>
     #         breakpoint()
     #       File "/usr/lib64/python3.10/bdb.py", line 94, in trace_dispatch
     #         return self.dispatch_return(frame, arg)
@@ -33,9 +33,9 @@ def _db():
     #socket.socket.__repr__ = print
 
     # It doesn't even have to be the initial __repr__, this has the first behavor too:
-    #     py bug-1.py
+    #     py pdb_bug.py
     #     --Call--
-    #     > /data/sel/Documents/Projects/mopfiles/bug-1.py(41)nonsense()
+    #     > /data/sel/Documents/Projects/mopfiles/pdb_bug.py(41)nonsense()
     #     -> def nonsense(self): ...
     #     (Pdb) 
     #def nonsense(self): ...
