@@ -1,32 +1,43 @@
 """
 Threaded Remote Read Eval Print Loop (trrepl - read "triple")
 
-TODO/COULDO: provide a basic completion-like for use with eg rlwrap
+TODO: docstring, general use and such
 """
-
-import enum
-import os
-import pprint
-import signal
-import socket
-import sys
-import threading
-import types
 
 
 class trrepl:
     """
-    TODO: make `help(trrepl())` useful
-
-    potential 'setting-like's:
-    - do notify with print  :g/[^.]print(
-    - set self as globals("__"), instead of trrepl()
+    TODO: docstring with use as help(__) in mind
     """
 
-    _instance = None
-    _lock = threading.Lock()
+    from threading import Lock
+    from types import FrameType
+    from enum import Enum
 
-    class States(enum.Enum):
+    _instance = None
+    _lock = Lock()
+
+    class settings:
+        """
+        * port: port to use, default is 4099
+        * logger: a logger to use (server-side), or None
+        * pprint: whether to use pprint or simply repr
+        * greeting: message printed once uppon successful connection
+        """
+
+        from logging import Logger, getLogger
+
+        port: int = 4099
+        logger: "Logger | None" = getLogger(__file__)
+        pprint: bool = True
+        greeting: str = (
+            "__ is the trrepl itself; see help(__), or eg help(__.frame)\n"
+            "help(__.settings) for the settings and their current values\n"
+        )
+
+        del Logger, getLogger
+
+    class _States(Enum):
         READLINE = "<<< "
         CONTINUE = ",,, "
         DONE = "?!"
@@ -38,22 +49,35 @@ class trrepl:
                     cls._instance = super().__new__(cls)
         return cls._instance
 
-    def __init__(self, frame: "types.FrameType | None" = None):
+    def __init__(self, frame: "FrameType | None" = None):
         if hasattr(self, "_server"):  # already init, bail out
             return
 
-        self._server = socket.socket()
+        from socket import socket
+
+        self._server = socket()
         try:
-            self._server.bind(("localhost", 4444))
+            self._server.bind(("localhost", trrepl.settings.port))
             self._server.listen(1)
-        except Exception as e:
+        except BaseException as e:
+            if trrepl.settings.logger:
+                print("Could not bind socket:", e)
             self._server.close()
             raise
 
-        print("Accepting connection...")
-        self._conn, self._addr = self._server.accept()
+        if trrepl.settings.logger:
+            print("Accepting connection...")
+        try:
+            self._conn, self._addr = self._server.accept()
+        except BaseException as e:
+            if trrepl.settings.logger:
+                print("Could not accept connection:", e)
+            self._server.close()
+            raise
+
         self._io = self._conn.makefile("rw")
-        print("Got address", self._addr)
+        if trrepl.settings.logger:
+            print("Got address", self._addr)
         self._print("Hello", self._addr)
 
         if frame is not None:
@@ -70,16 +94,24 @@ class trrepl:
             self._globals = globals()
             self._locals = locals()
 
-        self._state = trrepl.States.READLINE
+        import pydoc
+
+        self._phelp = pydoc.help, pydoc.pager
+        pydoc.help = pydoc.Helper(input=self._io, output=self._io)
+        pydoc.pager = self._print
+        self._print(trrepl.settings.greeting)
+
+        self._state = trrepl._States.READLINE
         self._loop()
 
     def __del__(self):
-        self.close()
+        if hasattr(self, "_state"):  # ensure was fully init
+            self.close()
 
     def _line(self):
         if self._io.closed:
             return ""
-        self._io.write(self._state.value)
+        self._io.write("\1" + self._state.value + "\2")
         self._io.flush()
         try:
             return self._io.readline()
@@ -87,19 +119,20 @@ class trrepl:
             return ".\n"
 
     def _print(self, *a: ..., **ka: ...):
-        if self._io.closed:
-            return
-        print(*a, **ka, file=self._io)
+        if not self._io.closed:
+            print(*a, **ka, file=self._io)
 
     def _assess_statement(self, line: str):
+        """answers: should we use `exec` instead of `eval`?"""
         beg = line.lstrip()
-        eq = line.find("=")
+        eq = beg.find("=")
         return any(
             beg.startswith(kw)
             for kw in [
                 "case",
                 "class",
                 "def",
+                "del",
                 "for",
                 "global",
                 "if",
@@ -111,26 +144,24 @@ class trrepl:
         ) or (
             0 < eq
             and line[eq + 1] != "="
-            and line[eq - 1] != "="
-            and not "(" in line[:eq]
+            and line[eq - 1] not in "!:<=>"
+            and not sum(("(" == c) - (")" == c) for c in line[:eq])
         )
 
     def _assess_continues(self, line: str):
+        """answers: should we ask for another line of input?"""
         return (
-            1 < len(line)  # "" and "\n" don't continue
-            if trrepl.States.CONTINUE == self._state
+            "\n" == line
+            if trrepl._States.CONTINUE == self._state
             else line.rstrip()[-1] in "(:[{" or '"""' in line
         )
 
     def _loop(self):
         accu: "list[str]" = []
         for line in iter(self._line, ""):
-            if trrepl.States.DONE == self._state:
-                break
-
-            if "." == line.strip():
+            if "." == line.strip():  # just like ^C in the normal repl
                 accu.clear()
-                self._state = trrepl.States.READLINE
+                self._state = trrepl._States.READLINE
                 continue
 
             if "#" == line.lstrip()[:1]:
@@ -138,7 +169,7 @@ class trrepl:
             accu.append(line)
 
             if self._assess_continues(line):
-                self._state = trrepl.States.CONTINUE
+                self._state = trrepl._States.CONTINUE
                 continue
 
             self._globals["__"] = self
@@ -146,18 +177,30 @@ class trrepl:
             try:
                 r = exec(*a) if self._assess_statement(accu[0]) else eval(*a)
                 if r is not None:
-                    pprint.pprint(r, stream=self._io)
-                    globals()["_"] = r
-            except Exception as e:
+                    if trrepl.settings.pprint:
+                        from pprint import pprint
+
+                        pprint(
+                            r,
+                            stream=self._io,
+                            compact=True,
+                            sort_dicts=False,
+                            underscore_numbers=True,
+                        )
+                    else:
+                        print(repr(r))
+                    # TODO(maybe): globals()["_"] = r
+            except BaseException as e:
                 self._print(e)
             self._globals.pop("__")
 
             accu.clear()
-            self._state = trrepl.States.READLINE
+            self._state = trrepl._States.READLINE
 
         self.close()
 
     def backtrace(self):
+        """shows the backtrace from top to bottom"""
         for k, frame in enumerate(self._trace):
             self._print(
                 "[curr]" if self._curr == k else "      ",
@@ -166,6 +209,7 @@ class trrepl:
             )
 
     def frame(self, n: int = 0):
+        """set current frame to the (absolute) nth; 0 is top, -1 would be bottom"""
         frame = self._trace[n]
         self._print(
             f"[curr] {frame.f_code.co_filename}:{frame.f_lineno} "
@@ -179,41 +223,219 @@ class trrepl:
         self._locals = frame.f_locals
 
     def grab_stdio(self):
-        self._pstdio = sys.stdin, sys.stdin, sys.stdin
-        sys.stdin, sys.stdin, sys.stdin = (self._io,) * 3
+        """changes the sys stdin, out and err to go through the connection"""
+        if not hasattr(self, "_pstdio"):
+            import sys
+
+            self._pstdio = sys.stdin, sys.stdout, sys.stderr
+            sys.stdin, sys.stdout, sys.stderr = (self._io,) * 3
 
     def release_stdio(self):
-        sys.stdin, sys.stdin, sys.stdin = self._pstdio
-        del self._pstdio
+        """resets the sys stdin, out and err to their original"""
+        if hasattr(self, "_pstdio"):
+            import sys
+
+            sys.stdin, sys.stdout, sys.stderr = self._pstdio
+            del self._pstdio
 
     def close(self):
-        if trrepl.States.DONE == self._state:  # eg. instance getting gc'd
+        """closes the connection; equivalent to, well, closing the connection"""
+        if trrepl._States.DONE == self._state:  # eg. instance getting gc'd
             return
 
-        self._print("Goodby", self._addr)
-        print("Closing with", self._addr)
-        self._io.flush()
+        import pydoc
 
-        if hasattr(self, "_pstdio"):
-            self.release_stdio()
+        pydoc.help, pydoc.pager = self._phelp
+        self.release_stdio()
+
+        self._print("Goodby", self._addr, flush=True)
+        if trrepl.settings.logger:
+            print("Closing with", self._addr)
 
         if not self._io.closed:
             self._io.close()
-        self._conn.close()
-        self._server.close()
+        try:
+            self._conn.close()
+            self._server.close()
+        except BaseException:  # ... anything could go wrong, probly...
+            raise
 
-        with trrepl._lock:
-            trrepl._instance = None
+        finally:
+            with trrepl._lock:
+                trrepl._instance = None
 
-        self._state = trrepl.States.DONE
+            self._state = trrepl._States.DONE
+
+    del Enum, FrameType, Lock
 
 
-def initrrepl(save_pid_to_file: str | None = None):
+def initrrepl(
+    *,
+    save_pid_to_file: "str | None" = None,
+    edit_settings: "trrepl.settings | None" = None,
+):
+    """
+    Setup signal handling (SIGUSR1).
+
+    If `save_pid_to_file` is given, saves the pid to the given file. Use
+    `edit_settings` to change some of the values (see `trrepl.settings`).
+    """
+    from os import getpid
+    from threading import Thread
+    from signal import SIGUSR1, signal
+
     if save_pid_to_file:
         with open(save_pid_to_file, "w") as pid:
-            print(os.getpid(), file=pid)
+            print(getpid(), file=pid)
 
-    signal.signal(
-        signal.SIGUSR1,
-        lambda _, f: threading.Thread(target=trrepl, args=(f,)).start(),
+    if edit_settings:
+        unchanged = object()
+        for k in dir(edit_settings):
+            setting = getattr(edit_settings, k, unchanged)
+            if setting is not unchanged:
+                setattr(trrepl.settings, k, setting)
+
+    signal(SIGUSR1, lambda _, f: Thread(target=trrepl, args=(f,)).start())
+
+
+if "__main__" == __name__:
+    from argparse import ArgumentParser, ArgumentTypeError
+
+    class uint(int):
+        def __new__(cls, value: str):
+            r = super().__new__(cls, value)
+            if r <= 0:
+                raise ArgumentTypeError(f"invalid positive int: '{value}'")
+            return r
+
+    def pid_or_pid_file(value: str):
+        try:
+            pid = uint(value)
+        except ValueError:
+            try:
+                with open(value, "r") as file:
+                    pid = uint(file.read().strip())
+            except FileNotFoundError:
+                raise ArgumentTypeError(f"file not found: '{value}'")
+        return pid
+
+    parse = ArgumentParser(
+        description=(
+            "this is more or less equivalent to running:"
+            " kill <pid> && rlwrap nc <w> <port>"
+        ),
     )
+    parse.add_argument(
+        "-c",
+        help="program passed in as string",
+        metavar="cmd",
+    )
+    parse.add_argument(
+        "-i",
+        action="store_true",
+        help=(
+            "inspect interactively after running script; forces a prompt even"
+            " if stdin does not appear to be a terminal"
+        ),
+    )
+    parse.add_argument(
+        "-w",
+        default=0,
+        help="connect timeout in seconds; default (0) is wait indefinitely",
+        metavar="sec",
+        type=uint,
+    )
+    parse.add_argument("pid", metavar="pid_or_pid_file", type=pid_or_pid_file)
+    parse.add_argument("port", default=trrepl.settings.port, nargs="?", type=uint)
+
+    opts = parse.parse_args()
+
+    from os import kill
+    from signal import SIGUSR1
+    from time import sleep
+
+    kill(opts.pid, SIGUSR1)
+    sleep(1)  # TODO: opts.w
+
+    from atexit import register
+    from socket import socket
+
+    client = socket()
+    client.connect(("localhost", opts.port))
+    register(client.close)
+    io = client.makefile("rw")
+    register(io.close)
+
+    def read_to_prompt():
+        buffer: "list[str]" = []
+        text: "str | None" = None
+
+        for chunk in iter(io.read, ""):
+            chunk, _, found = chunk.partition("\1" if text is None else "\2")
+            buffer.append(chunk)
+            if not found:
+                continue
+
+            accu = "".join(buffer)
+            buffer.clear()
+            if text is None:
+                text = accu
+                prompt, _, found = found.partition("\2")
+                if found:
+                    yield text, prompt
+                    text = None
+            else:
+                yield text, accu
+                text = None
+
+            buffer.append(found)
+
+        left = (text or "") + "".join(buffer)
+        if left:
+            yield left, str()
+
+    from sys import stdin
+
+    text_prompt = read_to_prompt()
+    text, prompt = next(text_prompt)
+    if not opts.c and stdin.isatty():
+        print(text, prompt, sep="")
+
+    if opts.c:
+        io.write(opts.c)
+        io.flush()
+        text, prompt = next(text_prompt)
+        print(text)
+
+    if not stdin.isatty():
+        for line in stdin:
+            io.write(line)
+            io.flush()
+            text, prompt = next(text_prompt)
+            print(text)
+
+    if opts.i or not opts.c and stdin.isatty():
+        if not stdin.isatty():
+            import os
+
+            # best effort (like, probably not win-friendly)
+            tty_fd = os.open("/dev/tty", os.O_RDWR)
+            os.dup2(tty_fd, stdin.fileno())
+            os.close(tty_fd)
+
+        try:
+            import readline as _
+
+            # TODO(maybe): history? completion? etc...
+        except:
+            pass
+
+        while 1:
+            try:
+                line = input(prompt)
+            except KeyboardInterrupt:
+                line = "."
+            io.write(line + "\n")
+            io.flush()
+            text, prompt = next(text_prompt)
+            print(text)
