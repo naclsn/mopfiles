@@ -319,6 +319,10 @@ if "__main__" == __name__:
                 raise ArgumentTypeError(f"file not found: '{value}'")
         return pid
 
+    def address(value: str):
+        host, _, port = value.rpartition(":")
+        return host or "localhost", uint(port)
+
     parse = ArgumentParser(
         description=(
             "this is more or less equivalent to running:"
@@ -345,8 +349,17 @@ if "__main__" == __name__:
         metavar="sec",
         type=uint,
     )
-    parse.add_argument("pid", metavar="pid_or_pid_file", type=pid_or_pid_file)
-    parse.add_argument("port", default=trrepl.settings.port, nargs="?", type=uint)
+    parse.add_argument(
+        "pid",
+        metavar="pid_or_pid_file",
+        type=pid_or_pid_file,
+    )
+    parse.add_argument(
+        "address",
+        default=("localhost", trrepl.settings.port),
+        nargs="?",
+        type=address,
+    )
 
     opts = parse.parse_args()
 
