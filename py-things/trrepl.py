@@ -111,16 +111,22 @@ class trrepl:
     def _line(self):
         if self._io.closed:
             return ""
-        self._io.write("\1" + self._state.value + "\2")
-        self._io.flush()
         try:
+            self._io.write("\1" + self._state.value + "\2")
+            self._io.flush()
             return self._io.readline()
         except KeyboardInterrupt:
             return ".\n"
+        except ConnectionError:
+            return ""
 
     def _print(self, *a: ..., **ka: ...):
-        if not self._io.closed:
+        if self._io.closed:
+            return
+        try:
             print(*a, **ka, file=self._io)
+        except ConnectionError:
+            pass
 
     def _assess_statement(self, line: str):
         """answers: should we use `exec` instead of `eval`?"""
@@ -150,10 +156,8 @@ class trrepl:
 
     def _assess_continues(self, line: str):
         """answers: should we ask for another line of input?"""
-        return (
-            "\n" == line
-            if trrepl._States.CONTINUE == self._state
-            else line.rstrip()[-1] in "(:[{" or '"""' in line
+        return "\n" != line and (
+            line.isspace() or line.rstrip()[-1] in "(:[{" or '"""' in line
         )
 
     def _loop(self):
@@ -172,30 +176,34 @@ class trrepl:
                 self._state = trrepl._States.CONTINUE
                 continue
 
+            source = "".join(accu)
+            run = exec if self._assess_statement(accu[0]) else eval
+            accu.clear()
+            self._state = trrepl._States.READLINE
+
+            if source.isspace():
+                continue
+
             self._globals["__"] = self
-            a = "".join(accu), self._globals, self._locals
             try:
-                r = exec(*a) if self._assess_statement(accu[0]) else eval(*a)
-                if r is not None:
+                _ = run(source, self._globals, self._locals)
+                if _ is not None:
                     if trrepl.settings.pprint:
                         from pprint import pprint
 
                         pprint(
-                            r,
+                            _,
                             stream=self._io,
                             compact=True,
                             sort_dicts=False,
                             underscore_numbers=True,
                         )
                     else:
-                        print(repr(r))
-                    # TODO(maybe): globals()["_"] = r
+                        print(repr(_))
+                    # TODO(maybe): globals()["_"] = _
             except BaseException as e:
                 self._print(e)
             self._globals.pop("__")
-
-            accu.clear()
-            self._state = trrepl._States.READLINE
 
         self.close()
 
@@ -253,7 +261,10 @@ class trrepl:
             print("Closing with", self._addr)
 
         if not self._io.closed:
-            self._io.close()
+            try:
+                self._io.close()
+            except ConnectionError:
+                pass
         try:
             self._conn.close()
             self._server.close()
@@ -344,10 +355,10 @@ if "__main__" == __name__:
     )
     parse.add_argument(
         "-w",
-        default=0,
-        help="connect timeout in seconds; default (0) is wait indefinitely",
+        default=1,
+        help="connect timeout in seconds; defaults to 1s",
         metavar="sec",
-        type=uint,
+        type=float,
     )
     parse.add_argument(
         "pid",
@@ -368,42 +379,49 @@ if "__main__" == __name__:
     from time import sleep
 
     kill(opts.pid, SIGUSR1)
-    sleep(1)  # TODO: opts.w
+    sleep(1)  # :/
 
     from atexit import register
     from socket import socket
 
     client = socket()
-    client.connect(("localhost", opts.port))
+    client.settimeout(opts.w)
+    try:
+        client.connect(opts.address)
+    except ConnectionError:
+        try:
+            client.connect(opts.address)
+        except ConnectionError:
+            client.connect(opts.address)
     register(client.close)
-    io = client.makefile("rw")
-    register(io.close)
 
     def read_to_prompt():
-        buffer: "list[str]" = []
+        buffer: "list[bytes]" = []
         text: "str | None" = None
 
-        for chunk in iter(io.read, ""):
-            chunk, _, found = chunk.partition("\1" if text is None else "\2")
+        for chunk in iter(lambda: client.recv(1024), ""):
+            chunk, found, follows = chunk.partition(b"\1" if text is None else b"\2")
             buffer.append(chunk)
             if not found:
                 continue
 
-            accu = "".join(buffer)
+            accu = b"".join(buffer).decode()
             buffer.clear()
             if text is None:
                 text = accu
-                prompt, _, found = found.partition("\2")
+                prompt, found, follows = follows.partition(b"\2")
                 if found:
-                    yield text, prompt
+                    yield text, prompt.decode()
                     text = None
+                else:
+                    follows = prompt
             else:
                 yield text, accu
                 text = None
 
-            buffer.append(found)
+            buffer.append(follows)
 
-        left = (text or "") + "".join(buffer)
+        left = (text or "") + b"".join(buffer).decode()
         if left:
             yield left, str()
 
@@ -412,26 +430,23 @@ if "__main__" == __name__:
     text_prompt = read_to_prompt()
     text, prompt = next(text_prompt)
     if not opts.c and stdin.isatty():
-        print(text, prompt, sep="")
+        print(text, sep="", end="")
 
     if opts.c:
-        io.write(opts.c)
-        io.flush()
+        client.sendall(opts.c.encode())
         text, prompt = next(text_prompt)
-        print(text)
+        print(text, end="")
 
     if not stdin.isatty():
         for line in stdin:
-            io.write(line)
-            io.flush()
+            client.sendall(line.encode())
             text, prompt = next(text_prompt)
-            print(text)
+            print(text, end="")
 
     if opts.i or not opts.c and stdin.isatty():
         if not stdin.isatty():
             import os
 
-            # best effort (like, probably not win-friendly)
             tty_fd = os.open("/dev/tty", os.O_RDWR)
             os.dup2(tty_fd, stdin.fileno())
             os.close(tty_fd)
@@ -448,7 +463,9 @@ if "__main__" == __name__:
                 line = input(prompt)
             except KeyboardInterrupt:
                 line = "."
-            io.write(line + "\n")
-            io.flush()
+            except EOFError:
+                print()
+                break
+            client.sendall(line.encode() + b"\n")
             text, prompt = next(text_prompt)
-            print(text)
+            print(text, end="")
