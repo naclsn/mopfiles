@@ -1,7 +1,34 @@
 """
 Threaded Remote Read Eval Print Loop (trrepl - read "triple")
 
-TODO: docstring, general use and such
+Provides an interactive REPL, somewhat like the Python REPL, on a running
+program without interrupting it. The REPL will be available through a socket.
+This does not add any overhead outside of active use (the necessary resources
+are only allocated when an interactive session is live).
+
+    from trrepl import initrrepl
+    initrrepl(save_pid_to_file="/tmp/my.pid")
+
+Once setup and the program running, it will react to SIGUSR1 by opening
+a server socket on (configurable) port 4099 in its own thread. This very module
+can be used as a client (with readline(3) if available):
+
+    $ python -m trreple /tmp/my.pid
+
+This is equivalent to (tho arguably less reliable than):
+
+    $ kill -SIGUSR1 `cat /tmp/my.pid`
+    $ nc localhost 4099
+
+Limitations:
+* uses SIGUSR1, so it cannot be overloaded without potentially conflicting
+* (intentionally) limits to a single live interactive session at once
+* the built-in client can be unreliable (not that much, just needs some love)
+
+TODO/FIXME:
+* runs in its own thread (and what comes with modifying another thread's vars)
+* accessing other thread, also how it will be with async stuff (could be cool)
+* (i need to work on the locals situation, it needs to behave as expectable)
 """
 
 
