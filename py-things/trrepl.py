@@ -1,5 +1,7 @@
-"""
-Threaded Remote Read Eval Print Loop (trrepl - read "triple")
+"""Threaded Remote Read Eval Print Loop (trrepl - read "triple")
+
+License: MIT License - Copyright (c) 2024 Grenier Celestin
+Just, know what you're using and doing-
 
 Provides an interactive REPL, somewhat like the Python REPL, on a running
 program without interrupting it. The REPL will be available through a socket.
@@ -213,20 +215,20 @@ class trrepl:
 
             self._globals["__"] = self
             try:
-                _ = run(source, self._globals, self._locals)
-                if _ is not None:
+                r = run(source, self._globals, self._locals)
+                if r is not None:
                     if trrepl.settings.pprint:
                         from pprint import pprint
 
                         pprint(
-                            _,
+                            r,
                             stream=self._io,
                             compact=True,
                             sort_dicts=False,
                             underscore_numbers=True,
                         )
                     else:
-                        print(repr(_))
+                        print(repr(r))
                     # TODO(maybe): globals()["_"] = _
             except BaseException as e:
                 self._print(e)
@@ -244,7 +246,7 @@ class trrepl:
             )
 
     def frame(self, n: int = 0):
-        """set current frame to the (absolute) nth; 0 is top, -1 would be bottom"""
+        """set current frame to (absolute) nth; 0 is top, -1 would be bottom"""
         frame = self._trace[n]
         self._print(
             f"[curr] {frame.f_code.co_filename}:{frame.f_lineno} "
@@ -274,7 +276,7 @@ class trrepl:
             del self._pstdio
 
     def close(self):
-        """closes the connection; equivalent to, well, closing the connection"""
+        """closes the connection, same as just closing `nc`"""
         if trrepl._States.DONE == self._state:  # eg. instance getting gc'd
             return
 
@@ -427,7 +429,7 @@ if "__main__" == __name__:
         text: "str | None" = None
 
         for chunk in iter(lambda: client.recv(1024), ""):
-            chunk, found, follows = chunk.partition(b"\1" if text is None else b"\2")
+            chunk, found, t = chunk.partition(b"\1" if text is None else b"\2")
             buffer.append(chunk)
             if not found:
                 continue
@@ -436,17 +438,17 @@ if "__main__" == __name__:
             buffer.clear()
             if text is None:
                 text = accu
-                prompt, found, follows = follows.partition(b"\2")
+                prompt, found, t = t.partition(b"\2")
                 if found:
                     yield text, prompt.decode()
                     text = None
                 else:
-                    follows = prompt
+                    t = prompt
             else:
                 yield text, accu
                 text = None
 
-            buffer.append(follows)
+            buffer.append(t)
 
         left = (text or "") + b"".join(buffer).decode()
         if left:
@@ -482,7 +484,7 @@ if "__main__" == __name__:
             import readline as _
 
             # TODO(maybe): history? completion? etc...
-        except:
+        except ModuleNotFoundError:
             pass
 
         while 1:
