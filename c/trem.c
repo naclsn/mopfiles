@@ -38,9 +38,9 @@ typedef dyarr(u8) buf;
 #endif // countof
 
 #define FRAME_IMPLEMENTATION
-#include "utils/frame.h"
+#include "includes/frame.h"
 #define TEXT_IMPLEMENTATION
-#include "utils/text.h"
+#include "includes/text.h"
 
 #include <pthread.h>
 #include <pty.h>
