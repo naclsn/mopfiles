@@ -1,3 +1,13 @@
+from pprint import pprint, pformat
+import sys
+
+try:
+    sys.tty = open("/dev/tty", "w")  # can't rw because python
+    __import__("atexit").register(sys.tty.close)
+except:
+    pass
+
+
 def interact(locals: "dict[str, object]", hist: str = "/tmp/interact.hist"):
     """Make a Python REPL here and now"""
 
@@ -32,12 +42,31 @@ def interact(locals: "dict[str, object]", hist: str = "/tmp/interact.hist"):
     code.interact(local=locals)
 
 
+def callchain() -> str:
+    import inspect
+
+    def method(info: inspect.FrameInfo) -> str:
+        fn = info.function
+        locs = info.frame.f_locals
+        return (
+            f'"{type(locs["self"]).__name__}.{fn}"'
+            if "self" in locs
+            else f'"{fn}"'
+        )
+
+    return " -> ".join(map(method, reversed(inspect.stack())))
+
+
 class whatever:
     """Print whatever is done to itself"""
 
     _instances: "dict[int, str]" = {}
 
-    print = __builtins__["print"]
+    print = (
+        __builtins__["print"]
+        if isinstance(__builtins__, dict)
+        else __builtins__.print
+    )
     from pprint import pprint
     from sys import stdout
 
