@@ -9,16 +9,20 @@ This is a really small, no dependencies, Python server that
 simply prints out everything from the requests it gets and
 reply with a predetermined response.
 
-The initial response is b"hi :3" (as 'text/plain'). To
-change it, press ^C once. If the input looks like a valid
-JSON it will be set to use 'application/json'. Pressing ^C
-twice will stop the program.
+The initial response is b"hi :3" (as 'text/plain').
+To change it, press ^C once then for example:
+    * plain:hello world
+    * json:{"coucou": 42}
+    * file:resp.json
+    * (empty will keep previous)
+
+Pressing ^C twice will stop the program.
 """
 
 from dataclasses import dataclass
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from io import IOBase
-from json import load, loads
+from json import load
 from pprint import pprint
 from sys import argv
 from urllib.parse import parse_qs, urlparse
@@ -101,7 +105,7 @@ class Sayrver(BaseHTTPRequestHandler):
         self.do("HEAD")
 
 
-if ["-h"] == argv[1:]:
+if '-h' in argv:
     print(__doc__)
     exit(1)
 
@@ -118,16 +122,30 @@ while 1:
         ).serve_forever()
 
     except KeyboardInterrupt:
-        print(f"urrent reply ({Sayrver.reply[0]}):", Sayrver.reply[1])
+        print(f"urrent reply:", Sayrver.reply[1], Sayrver.reply[0], sep="\n")
         try:
             usr = input("new reply: ")
         except KeyboardInterrupt:
             exit()
         if usr:
-            try:
-                loads(usr)
-                Sayrver.reply = ("application/json", usr.encode())
-            except:
-                Sayrver.reply = ("text/plain", usr.encode())
+            type, found, text = usr.partition(":")
+            if not found:
+                type = "plain"
+
+            if "file" == type:
+                try:
+                    with open(text, "rb") as file:
+                        content = file.read()
+                except FileNotFoundError:
+                    continue
+                _, _, ext = text.rpartition(".")
+                mime = {'aac':'audio/aac','abw':'application/x-abiword','apng':'image/apng','arc':'application/x-freearc','avif':'image/avif','avi':'video/x-msvideo','azw':'application/vnd.amazon.ebook','bin':'application/octet-stream','bmp':'image/bmp','bz':'application/x-bzip','bz2':'application/x-bzip2','cda':'application/x-cdf','csh':'application/x-csh','css':'text/css','csv':'text/csv','doc':'application/msword','docx':'application/vnd.openxmlformats-officedocument.wordprocessingml.document','eot':'application/vnd.ms-fontobject','epub':'application/epub+zip','gz':'application/gzip','gif':'image/gif','htm':'text/html','html':'text/html','ico':'image/vnd.microsoft.icon','ics':'text/calendar','jar':'application/java-archive','jpeg':'image/jpeg','jpg':'image/jpeg','js':'text/javascript','json':'application/json','jsonld':'application/ld+json','mid':'audio/midi','midi':'audio/x-midi','mjs':'text/javascript','mp3':'audio/mpeg','mp4':'video/mp4','mpeg':'video/mpeg','mpkg':'application/vnd.apple.installer+xml','odp':'application/vnd.oasis.opendocument.presentation','ods':'application/vnd.oasis.opendocument.spreadsheet','odt':'application/vnd.oasis.opendocument.text','oga':'audio/ogg','ogv':'video/ogg','ogx':'application/ogg','opus':'audio/ogg','otf':'font/otf','png':'image/png','pdf':'application/pdf','php':'application/x-httpd-php','ppt':'application/vnd.ms-powerpoint','pptx':'application/vnd.openxmlformats-officedocument.presentationml.presentation','rar':'application/vnd.rar','rtf':'application/rtf','sh':'application/x-sh','svg':'image/svg+xml','tar':'application/x-tar','tif':'image/tiff','tiff':'image/tiff','ts':'video/mp2t','ttf':'font/ttf','txt':'text/plain','vsd':'application/vnd.visio','wav':'audio/wav','weba':'audio/webm','webm':'video/webm','webp':'image/webp','woff':'font/woff','woff2':'font/woff2','xhtml':'application/xhtml+xml','xls':'application/vnd.ms-excel','xlsx':'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet','xml':'application/xml','xul':'application/vnd.mozilla.xul+xml','zip':'application/zip','3gp':'video/3gpp','3g2':'video/3gpp2','7z':'application/x-7z-compressed'
+                    }.get(ext, "text/plain")
+            else:
+                content = text.encode()
+                mime = {'plain':'text/plain','json':'application/json'
+                    }.get(type, "text/plain")
+
+            Sayrver.reply = (mime, content)
         else:
             print("unchanged")
