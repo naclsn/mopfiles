@@ -1,0 +1,11 @@
+pytest
+
+    -k <garbled-expression-ish>
+    -x, --exitfirst
+    --pdb
+    -s, --capture=no
+    [--lf, --ff, --nf, (--xxx-first)]
+    --sw, --setpwise
+    -l, --showlocals
+    --tb={auto,long,short,line,native,no}
+    --co, --collect-only

@@ -83,6 +83,7 @@ class whatever:
         ("__anext__", None),  # XXX?
         ("__await__", None),
         ("__bool__", True),  # YYY
+        ("__buffer__", memoryview(b"C")),
         ("__bytes__", b"B"),  # YYY
         ("__call__", None),
         ("__ceil__", None),
@@ -146,6 +147,7 @@ class whatever:
         ("__radd__", None),
         ("__rand__", None),
         ("__rdivmod__", None),
+        ("__release_buffer__", None),
         ("__repr__", "(whatever)"),  # YYY
         ("__reversed__", None),
         ("__rfloordiv__", None),
