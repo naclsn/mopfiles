@@ -159,7 +159,8 @@ int client(char const* id, char const* leader_key, char const** send_sequence, i
 
             case CTRL('Z'):
               cleanup(0);
-              try(r, raise(SIGSTOP));
+              //try(r, raise(SIGSTOP)); // TODO: figure this out again, forgot why I changed it for what's below
+              try(r, kill(0, SIGTSTP));
               try(r, init(use, &addr, skip_raw));
               leader_found = false;
               continue;

@@ -121,6 +121,7 @@ int main(int argc, char const** argv) {
   while (argc && *argv) {
     if (NULL != cmd) {
       if (argis("--")) {
+        argc--;
         argv++;
         break;
       }
@@ -139,7 +140,8 @@ int main(int argc, char const** argv) {
 
     else if ('-' == (*argv)[0]) {
       if ('-' == (*argv)[1]) {
-        if (argis("--")) {
+        if ('\0' == (*argv)[2]) {
+          argc--;
           argv++;
           break;
         }
