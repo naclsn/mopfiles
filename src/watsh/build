@@ -1,0 +1,24 @@
+#!/bin/sh -e
+does() { echo "build: $@"; "$@"; }
+if [ README.md -nt usage.inc ]
+  then
+    echo 'build: generating usage.inc from README.md'
+    <README.md awk '
+      "```" == $0 { exit }
+      f { printf"\""$0"\\n\"\n" }
+      /--help/ { f = 1 }
+    ' | sed 1s/.\\/watsh/%s/ >usage.inc
+fi
+for f in *.[ch] usage.inc
+  do if [ $f -nt watsh ]
+    then
+      does cc main.c -DVERS=0.0.1-`git rev-parse --short HEAD 2>/dev/null` -o watsh -Wall -Wextra -pedantic
+      break
+  fi
+done
+case $1 in
+  run) shift; does exec ./watsh "$@" ;;
+  install) does cp ./watsh ${PREFIX:-/usr/local}/bin/watsh ;;
+  '') echo 'build: done' ;;
+  *) echo "build: unknown command '$1'; only 'run' and 'install'" ;;
+esac
