@@ -1,0 +1,24 @@
+#!/bin/sh -e
+does() { echo "build: $@"; "$@"; }
+if [ README.md -nt usage.inc ]
+  then
+    echo 'build: generating usage.inc from README.md'
+    <README.md awk '
+      "```" == $0 { exit }
+      f { printf"\""$0"\\n\"\n" }
+      /--help/ { f = 1 }
+    ' | sed 1s/.\\/daety/%s/ >usage.inc
+fi
+for f in *.[ch] usage.inc
+  do if [ $f -nt daety ]
+    then
+      does cc main.c client.c server.c socket.c -DVERS=0.1.8-`git rev-parse --short HEAD 2>/dev/null` -o daety -Wall -Wextra -pedantic
+      break
+  fi
+done
+case $1 in
+  run) shift; does exec ./daety "$@" ;;
+  install) does cp ./daety ${PREFIX:-/usr/local}/bin/daety ;;
+  '') echo 'build: done' ;;
+  *) echo "build: unknown command '$1'; only 'run' and 'install'" ;;
+esac
