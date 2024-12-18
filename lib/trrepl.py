@@ -15,23 +15,58 @@ Once setup and the program running, it will react to SIGUSR1 by opening
 a server socket on (configurable) port 4099 in its own thread. This very module
 can be used as a client (with readline(3) if available):
 
-    $ python -m trreple /tmp/my.pid
+    $ python -m trrepl /tmp/my.pid
 
-This is equivalent to (tho arguably less reliable than):
+This is equivalent to:
 
     $ kill -SIGUSR1 `cat /tmp/my.pid`
     $ nc localhost 4099
 
 Limitations:
 * uses SIGUSR1, so it cannot be overloaded without potentially conflicting
-* (intentionally) limits to a single live interactive session at once
-* the built-in client can be unreliable (not that much, just needs some love)
+* uses a port (4099 by default), so it needs to be available when needed
 
 TODO/FIXME:
-* runs in its own thread (and what comes with modifying another thread's vars)
-* accessing other thread, also how it will be with async stuff (could be cool)
-* (i need to work on the locals situation, it needs to behave as expectable)
+* accessing other thread, also async stuff (could be cool)
+* locals situation, it needs to behave as expectable
 """
+
+import sys
+
+
+# API {{{1
+__all__ = ["initrrepl", "trrepl"]
+
+
+def initrrepl(
+    *,
+    save_pid_to_file: "str | None" = None,
+    settings: "trrepl.Settings | None" = None,
+):
+    """
+    Setup signal handling (SIGUSR1).
+
+    If `save_pid_to_file` is given, saves the pid to the given file. Use
+    `settings` to change some of the initial values (see `trrepl.Settings`).
+    """
+    from os import getpid
+    from threading import Thread
+    from signal import SIGUSR1, signal
+
+    if save_pid_to_file:
+        with open(save_pid_to_file, "w") as pid:
+            print(getpid(), file=pid)
+
+    if not settings:
+        settings = trrepl.Settings()
+
+    signal(
+        SIGUSR1,
+        lambda _, f: Thread(
+            target=trrepl,
+            args=(trrepl.Settings(**vars(settings)), f),
+        ).start(),
+    )
 
 
 class trrepl:
@@ -39,14 +74,14 @@ class trrepl:
     TODO: docstring with use as help(__) in mind
     """
 
-    from threading import Lock
-    from types import FrameType
+    from dataclasses import dataclass
     from enum import Enum
+    from re import compile
+    from types import FrameType
 
-    _instance = None
-    _lock = Lock()
-
-    class settings:
+    # lifecycle {{{2
+    @dataclass
+    class Settings:
         """
         * port: port to use, default is 4099
         * logger: a logger to use (server-side), or None
@@ -66,47 +101,30 @@ class trrepl:
 
         del Logger, getLogger
 
-    class _States(Enum):
-        READLINE = "<<< "
-        CONTINUE = ",,, "
-        DONE = "?!"
-
-    def __new__(cls, *a: ..., **ka: ...):
-        if cls._instance is None:
-            with cls._lock:
-                if cls._instance is None:  # (double-checked locking)
-                    cls._instance = super().__new__(cls)
-        return cls._instance
-
-    def __init__(self, frame: "FrameType | None" = None):
-        if hasattr(self, "_server"):  # already init, bail out
-            return
+    def __init__(self, settings: Settings, frame: "FrameType | None" = None):
+        self.settings = settings
 
         from socket import socket
 
         self._server = socket()
         try:
-            self._server.bind(("localhost", trrepl.settings.port))
+            self._server.bind(("localhost", self.settings.port))
             self._server.listen(1)
         except BaseException as e:
-            if trrepl.settings.logger:
-                print("Could not bind socket:", e)
+            self._log("error", "Could not bind socket:", e)
             self._server.close()
             raise
 
-        if trrepl.settings.logger:
-            print("Accepting connection...")
+        self._log("info", "Accepting connection...")
         try:
             self._conn, self._addr = self._server.accept()
         except BaseException as e:
-            if trrepl.settings.logger:
-                print("Could not accept connection:", e)
+            self._log("error", "Could not accept connection:", e)
             self._server.close()
             raise
 
         self._io = self._conn.makefile("rw")
-        if trrepl.settings.logger:
-            print("Got address", self._addr)
+        self._log("info", "Got address", self._addr)
         self._print("Hello", self._addr)
 
         if frame is not None:
@@ -128,7 +146,7 @@ class trrepl:
         self._phelp = pydoc.help, pydoc.pager
         pydoc.help = pydoc.Helper(input=self._io, output=self._io)
         pydoc.pager = self._print
-        self._print(trrepl.settings.greeting)
+        self._print(self.settings.greeting)
 
         self._state = trrepl._States.READLINE
         self._loop()
@@ -137,6 +155,7 @@ class trrepl:
         if hasattr(self, "_state"):  # ensure was fully init
             self.close()
 
+    # io {{{2
     def _line(self):
         if self._io.closed:
             return ""
@@ -157,26 +176,25 @@ class trrepl:
         except ConnectionError:
             pass
 
+    def _log(self, level: str, *a: ..., **ka: ...):
+        if self.settings.logger:
+            getattr(self.settings.logger, level)(*a, **ka)
+
+    # loop {{{2
+    class _States(Enum):
+        READLINE = "<<< "
+        CONTINUE = ",,, "
+        CLOSED = "(done)"
+
+    _startswithkw = compile(
+        "(class|de[fl]|for|from|global|if|import|match|try|while|with)\\b"
+    )
+
     def _assess_statement(self, line: str):
         """answers: should we use `exec` instead of `eval`?"""
         beg = line.lstrip()
         eq = beg.find("=")
-        return any(
-            beg.startswith(kw)
-            for kw in [
-                "case",
-                "class",
-                "def",
-                "del",
-                "for",
-                "global",
-                "if",
-                "import",
-                "try",
-                "while",
-                "with",
-            ]
-        ) or (
+        return trrepl._startswithkw.match(beg) or (
             0 < eq
             and line[eq + 1] != "="
             and line[eq - 1] not in "!:<=>"
@@ -192,7 +210,7 @@ class trrepl:
     def _loop(self):
         accu: "list[str]" = []
         for line in iter(self._line, ""):
-            if "." == line.strip():  # just like ^C in the normal repl
+            if "." == line.strip():  # bit like ^C in the normal repl
                 accu.clear()
                 self._state = trrepl._States.READLINE
                 continue
@@ -215,9 +233,11 @@ class trrepl:
 
             self._globals["__"] = self
             try:
+                # TODO: maybe have a way that this times out if requested
+                #       (eg inf. loop, as there is no way to ^C)
                 r = run(source, self._globals, self._locals)
                 if r is not None:
-                    if trrepl.settings.pprint:
+                    if self.settings.pprint:
                         from pprint import pprint
 
                         pprint(
@@ -236,6 +256,7 @@ class trrepl:
 
         self.close()
 
+    # 'commands' {{{2
     def backtrace(self):
         """shows the backtrace from top to bottom"""
         for k, frame in enumerate(self._trace):
@@ -262,22 +283,18 @@ class trrepl:
     def grab_stdio(self):
         """changes the sys stdin, out and err to go through the connection"""
         if not hasattr(self, "_pstdio"):
-            import sys
-
             self._pstdio = sys.stdin, sys.stdout, sys.stderr
             sys.stdin, sys.stdout, sys.stderr = (self._io,) * 3
 
     def release_stdio(self):
         """resets the sys stdin, out and err to their original"""
         if hasattr(self, "_pstdio"):
-            import sys
-
             sys.stdin, sys.stdout, sys.stderr = self._pstdio
             del self._pstdio
 
     def close(self):
         """closes the connection, same as just closing `nc`"""
-        if trrepl._States.DONE == self._state:  # eg. instance getting gc'd
+        if trrepl._States.CLOSED == self._state:  # eg. instance getting gc'd
             return
 
         import pydoc
@@ -286,8 +303,7 @@ class trrepl:
         self.release_stdio()
 
         self._print("Goodby", self._addr, flush=True)
-        if trrepl.settings.logger:
-            print("Closing with", self._addr)
+        self._log("info", "Closing with", self._addr)
 
         if not self._io.closed:
             try:
@@ -297,48 +313,16 @@ class trrepl:
         try:
             self._conn.close()
             self._server.close()
-        except BaseException:  # ... anything could go wrong, probly...
-            raise
 
         finally:
-            with trrepl._lock:
-                trrepl._instance = None
+            self._state = trrepl._States.CLOSED
 
-            self._state = trrepl._States.DONE
-
-    del Enum, FrameType, Lock
+    del Enum, FrameType, compile
 
 
-def initrrepl(
-    *,
-    save_pid_to_file: "str | None" = None,
-    edit_settings: "trrepl.settings | None" = None,
-):
-    """
-    Setup signal handling (SIGUSR1).
-
-    If `save_pid_to_file` is given, saves the pid to the given file. Use
-    `edit_settings` to change some of the values (see `trrepl.settings`).
-    """
-    from os import getpid
-    from threading import Thread
-    from signal import SIGUSR1, signal
-
-    if save_pid_to_file:
-        with open(save_pid_to_file, "w") as pid:
-            print(getpid(), file=pid)
-
-    if edit_settings:
-        unchanged = object()
-        for k in dir(edit_settings):
-            setting = getattr(edit_settings, k, unchanged)
-            if setting is not unchanged:
-                setattr(trrepl.settings, k, setting)
-
-    signal(SIGUSR1, lambda _, f: Thread(target=trrepl, args=(f,)).start())
-
-
+# CLI {{{1
 if "__main__" == __name__:
+    # args {{{2
     from argparse import ArgumentParser, ArgumentTypeError
 
     class uint(int):
@@ -366,7 +350,7 @@ if "__main__" == __name__:
     parse = ArgumentParser(
         description=(
             "this is more or less equivalent to running:"
-            " kill <pid> && rlwrap nc <w> <port>"
+            " kill <pid> && rlwrap nc <-w> localhost <port>"
         ),
     )
     parse.add_argument(
@@ -385,24 +369,27 @@ if "__main__" == __name__:
     parse.add_argument(
         "-w",
         default=1,
-        help="connect timeout in seconds; defaults to 1s",
+        help="connect timeout in seconds; default: 1s",
         metavar="sec",
         type=float,
     )
     parse.add_argument(
         "pid",
+        help="if not a pid, should be a file with a pid in it",
         metavar="pid_or_pid_file",
         type=pid_or_pid_file,
     )
     parse.add_argument(
         "address",
-        default=("localhost", trrepl.settings.port),
+        default=("localhost", trrepl.Settings.port),
+        help=f"in the form [<host>:]<port>; default: {trrepl.Settings.port}",
         nargs="?",
         type=address,
     )
 
     opts = parse.parse_args()
 
+    # prep {{{2
     from os import kill
     from signal import SIGUSR1
     from time import sleep
@@ -429,7 +416,7 @@ if "__main__" == __name__:
         text: "str | None" = None
 
         for chunk in iter(lambda: client.recv(1024), ""):
-            chunk, found, t = chunk.partition(b"\1" if text is None else b"\2")
+            chunk, found, t = chunk.partition([b"\2", b"\1"][text is None])
             buffer.append(chunk)
             if not found:
                 continue
@@ -454,11 +441,11 @@ if "__main__" == __name__:
         if left:
             yield left, str()
 
-    from sys import stdin
-
+    # act {{{2
     text_prompt = read_to_prompt()
     text, prompt = next(text_prompt)
-    if not opts.c and stdin.isatty():
+    istty = sys.stdin.isatty()
+    if not opts.c and istty:
         print(text, sep="", end="")
 
     if opts.c:
@@ -466,18 +453,18 @@ if "__main__" == __name__:
         text, prompt = next(text_prompt)
         print(text, end="")
 
-    if not stdin.isatty():
-        for line in stdin:
+    if not istty:
+        for line in sys.stdin:
             client.sendall(line.encode())
             text, prompt = next(text_prompt)
             print(text, end="")
 
-    if opts.i or not opts.c and stdin.isatty():
-        if not stdin.isatty():
+    if opts.i or not opts.c and istty:
+        if not istty:
             import os
 
             tty_fd = os.open("/dev/tty", os.O_RDWR)
-            os.dup2(tty_fd, stdin.fileno())
+            os.dup2(tty_fd, sys.stdin.fileno())
             os.close(tty_fd)
 
         try:
