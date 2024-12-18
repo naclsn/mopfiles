@@ -29,6 +29,7 @@ Limitations:
 TODO/FIXME:
 * accessing other thread, also async stuff (could be cool)
 * locals situation, it needs to behave as expectable
+* enable more socket types (eg. unix-domain)
 """
 
 import sys
