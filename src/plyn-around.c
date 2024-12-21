@@ -1,4 +1,4 @@
-#include "includes/playnes.h"
+#include "../lib/playnes.h"
 
 void rotate_triangle(void) {
     renderloop (st) {

@@ -9,7 +9,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "dyarr.h"
+#include "../lib/dyarr.h"
 
 #ifndef countof
 #define countof(__a) (sizeof(__a)/sizeof*(__a))
@@ -38,9 +38,9 @@ typedef dyarr(u8) buf;
 #endif // countof
 
 #define FRAME_IMPLEMENTATION
-#include "includes/frame.h"
+#include "../lib/frame.h"
 #define TEXT_IMPLEMENTATION
-#include "includes/text.h"
+#include "../lib/text.h"
 
 #include <pthread.h>
 #include <pty.h>

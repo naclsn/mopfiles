@@ -20,7 +20,7 @@ void mylinepause(void);
 #define line_getchar mygetchar
 #define line_putchar myputchar
 #define line_pause mylinepause
-#include "includes/line.h"
+#include "../lib/line.h"
 
 FILE* file = NULL;
 unsigned short row = 24, col = 80;
