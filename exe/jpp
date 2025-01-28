@@ -1,0 +1,13 @@
+#!/bin/sh
+: ""'" use as :so `which jpp`
+ia jpp with open("/tmp/jpp", "w") as fp: import json; json.dump(fp=fp, obj
+fini "'
+
+set -e
+
+mkfifo /tmp/jpp
+trap 'rm /tmp/jpp' EXIT
+
+while jq --sort-keys --color-output . /tmp/jpp
+  do echo === `date +%FT%T`
+done
