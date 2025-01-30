@@ -11,7 +11,7 @@ args = p.parse_args()
 # graph construction {{{1
 dot = "digraph {"
 
-lines = [args.file.readlines()]  # type: list[str]
+lines: 'list[str]' = list(args.file.readlines())
 args.file.close()
 
 name_lines, names = zip(

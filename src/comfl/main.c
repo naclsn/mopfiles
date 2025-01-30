@@ -4,6 +4,9 @@
 #include <string.h>
 #include <xcb/xcb.h>
 
+// TODO: see `libwm`
+// https://github.com/wmutils/libwm/blob/dfa861903e4f1a045c6aaf4869dd6517941db689/libwm.c
+
 //#define countof(__a) (sizeof(__a)/sizeof*(__a))
 
 #define ref * const
