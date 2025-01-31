@@ -103,7 +103,8 @@ class trrepl:
         del Logger, getLogger
 
     def __init__(self, settings: Settings, frame: "FrameType | None" = None):
-        self.settings = settings
+        self.settings = trrepl.Settings()
+        vars(self.settings).update(vars(settings))
 
         from socket import socket
 
@@ -181,6 +182,25 @@ class trrepl:
         if self.settings.logger:
             getattr(self.settings.logger, level)(*a, **ka)
 
+    def _displayhook(self, v: object):
+        if self.settings.pprint:
+            from pprint import pprint
+
+            pprint(
+                v,
+                stream=self._io,
+                compact=True,
+                sort_dicts=False,
+                underscore_numbers=True,
+            )
+        else:
+            self._print(repr(v))
+        __builtins__._ = v
+        # TODO(maybe): globals() or self._globals  ["_"] = _
+
+    def _excepthook(self, _ty: type, e: BaseException, _trace: ...):
+        self._print(e)
+
     # loop {{{2
     class _States(Enum):
         READLINE = "<<< "
@@ -238,21 +258,9 @@ class trrepl:
                 #       (eg inf. loop, as there is no way to ^C)
                 r = run(source, self._globals, self._locals)
                 if r is not None:
-                    if self.settings.pprint:
-                        from pprint import pprint
-
-                        pprint(
-                            r,
-                            stream=self._io,
-                            compact=True,
-                            sort_dicts=False,
-                            underscore_numbers=True,
-                        )
-                    else:
-                        print(repr(r))
-                    # TODO(maybe): globals()["_"] = _
+                    self._displayhook(r)
             except BaseException as e:
-                self._print(e)
+                self._excepthook(type(e), e, None)
             self._globals.pop("__")
 
         self.close()
@@ -282,7 +290,11 @@ class trrepl:
         self._locals = frame.f_locals
 
     def grab_stdio(self):
-        """changes the sys stdin, out and err to go through the connection"""
+        """changes the sys stdin, out and err to go through the connection
+
+        this makes it possible to use eg. `__._displayhook = sys.displayhook`
+        (restore with `del __._displayhook`)
+        """
         if not hasattr(self, "_pstdio"):
             self._pstdio = sys.stdin, sys.stdout, sys.stderr
             sys.stdin, sys.stdout, sys.stderr = (self._io,) * 3
