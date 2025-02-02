@@ -6,10 +6,10 @@ Usage::
     breakpoint()
 
 Here is an alternative one-line to use with FIFOs::
-    import sys;s=vars(sys);b='breakpointhook';s[b]=lambda:s.update(s[n].close()or(n,open("/tmp/"+n,s[n].mode))for n in('stdin','stdout'))or s[f'__{b}__']()
+    import sys;s=vars(sys);b="breakpointhook";s[b]=lambda:s.update(s[n].close()or(n,open("/tmp/"+n,s[n].mode))for n in("stdin","stdout"))or s[f"__{b}__"]()
 
     mkfifo /tmp/stdin /tmp/stdout
-    cat /tmp/stdout & cat >/tmp/stdin
+    </tmp/stdout cat & cat >/tmp/stdin
 """
 
 __all__ = ["config", "set_trace", "socket", "sys"]
@@ -27,11 +27,13 @@ class config:
     socket_address: "tuple[str, int] | str" = ("localhost", 4099)
     grab_stdio: bool = False
     use_file: "str | None" = None
+    set_sys_breakpointhook: bool = True
 
     def __post_init__(self):
         global _config
         _config = self
-        sys.breakpointhook = set_trace
+        if self.set_sys_breakpointhook:
+            sys.breakpointhook = set_trace
 
 
 del dataclass
@@ -39,7 +41,8 @@ _config = None
 
 
 def set_trace(*a: ..., **ka: ...):
-    _config or config()
+    _config or config(set_sys_breakpointhook=False)
+    assert _config
 
     if _config.use_file:
         try:
