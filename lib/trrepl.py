@@ -182,7 +182,8 @@ class trrepl:
         if self.settings.logger:
             getattr(self.settings.logger, level)(*a, **ka)
 
-    def _displayhook(self, v: object):
+    def displayhook(self, v: object):
+        del self._globals["_"]
         if self.settings.pprint:
             from pprint import pprint
 
@@ -195,10 +196,9 @@ class trrepl:
             )
         else:
             self._print(repr(v))
-        __builtins__._ = v
-        # TODO(maybe): globals() or self._globals  ["_"] = _
+        self._globals["_"] = v
 
-    def _excepthook(self, _ty: type, e: BaseException, _trace: ...):
+    def excepthook(self, _ty: type, e: BaseException, _trace: ...):
         self._print(e)
 
     # loop {{{2
@@ -207,61 +207,35 @@ class trrepl:
         CONTINUE = ",,, "
         CLOSED = "(done)"
 
-    _startswithkw = compile(
-        "(class|de[fl]|for|from|global|if|import|match|try|while|with)\\b"
-    )
-
-    def _assess_statement(self, line: str):
-        """answers: should we use `exec` instead of `eval`?"""
-        beg = line.lstrip()
-        eq = beg.find("=")
-        return trrepl._startswithkw.match(beg) or (
-            0 < eq
-            and line[eq + 1] != "="
-            and line[eq - 1] not in "!:<=>"
-            and not sum(("(" == c) - (")" == c) for c in line[:eq])
-        )
-
-    def _assess_continues(self, line: str):
-        """answers: should we ask for another line of input?"""
-        return "\n" != line and (
-            line.isspace() or line.rstrip()[-1] in "(:[{" or '"""' in line
-        )
-
     def _loop(self):
-        accu: "list[str]" = []
+        from codeop import compile_command
+        from types import FunctionType
+
+        source = ""
         for line in iter(self._line, ""):
+            source += line
             if "." == line.strip():  # bit like ^C in the normal repl
-                accu.clear()
+                source = ""
                 self._state = trrepl._States.READLINE
                 continue
 
-            if "#" == line.lstrip()[:1]:
-                continue
-            accu.append(line)
-
-            if self._assess_continues(line):
-                self._state = trrepl._States.CONTINUE
-                continue
-
-            source = "".join(accu)
-            run = exec if self._assess_statement(accu[0]) else eval
-            accu.clear()
-            self._state = trrepl._States.READLINE
-
-            if source.isspace():
-                continue
-
-            self._globals["__"] = self
             try:
+                co = compile_command(source)
+                if co is None:  # command is incomplete
+                    self._state = trrepl._States.CONTINUE
+                    continue
+
+                self._globals["__"] = self
                 # TODO: maybe have a way that this times out if requested
                 #       (eg inf. loop, as there is no way to ^C)
-                r = run(source, self._globals, self._locals)
-                if r is not None:
-                    self._displayhook(r)
+                self.displayhook(FunctionType(co, self._globals)())
+                self._globals.pop("__")
+
             except BaseException as e:
-                self._excepthook(type(e), e, None)
-            self._globals.pop("__")
+                self.excepthook(type(e), e, None)
+
+            source = ""
+            self._state = trrepl._States.READLINE
 
         self.close()
 
@@ -271,16 +245,14 @@ class trrepl:
         for k, frame in enumerate(self._trace):
             self._print(
                 "[curr]" if self._curr == k else "      ",
-                f"{frame.f_code.co_filename}:{frame.f_lineno} "
-                + f"in {frame.f_code.co_name}",
+                f"{frame.f_code.co_filename}:{frame.f_lineno} " + f"in {frame.f_code.co_name}",
             )
 
     def frame(self, n: int = 0):
         """set current frame to (absolute) nth; 0 is top, -1 would be bottom"""
         frame = self._trace[n]
         self._print(
-            f"[curr] {frame.f_code.co_filename}:{frame.f_lineno} "
-            + f"in {frame.f_code.co_name}"
+            f"[curr] {frame.f_code.co_filename}:{frame.f_lineno} " + f"in {frame.f_code.co_name}"
         )
         locs = (k for k in frame.f_locals.keys() if "_" != k[0])
         self._print(*locs, sep="\t\n")
@@ -288,6 +260,10 @@ class trrepl:
         self._curr = n
         self._globals = frame.f_globals
         self._locals = frame.f_locals
+
+    def frames(self):
+        """see sys._current_frames, returns that"""
+        return sys._current_frames()
 
     def grab_stdio(self):
         """changes the sys stdin, out and err to go through the connection

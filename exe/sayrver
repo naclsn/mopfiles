@@ -9,6 +9,7 @@ replies with a predetermined reply, for examples:
     * plain:hello world
     * json:{"coucou": 42}
     * file:resp.json
+    * plain(418):a teapot I am
 
 Change the reply while running with ^C once. Twice exits.
 Example of using '-r' to stash and replay:
@@ -32,7 +33,7 @@ Example of using '-r' to stash and replay:
 from datetime import datetime
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from io import IOBase
-from json import load
+from json import load, loads
 from pprint import pformat
 from re import compile
 from sys import argv, stderr, stdout
@@ -48,7 +49,7 @@ puts = lambda txt: print(colo(txt))
 
 
 class Sayrver(BaseHTTPRequestHandler):
-    reply: "tuple[str, bytes]" = ("text/plain", b"hi :3")
+    reply: "tuple[str, int, bytes]" = ("text/plain", 200, b"hi :3")
     rawbody = False
     separator = ",  # ==="
 
@@ -71,34 +72,28 @@ class Sayrver(BaseHTTPRequestHandler):
         parts = urlparse(self.path)
         length = int(self.headers.get("Content-Length", 0))
         content = Sayrver._Content(length, self.rfile)
-        puts(
-            pformat(
-                {
-                    "_dt": datetime.now(),
-                    "method": method,
-                    "path": parts.path,
-                    "params": parts.params,
-                    "query": parse_qs(parts.query),
-                    "fragment": parts.fragment,
-                    "headers": self.headers.items(),
-                    "body": content.read() if Sayrver.rawbody else b"",
-                }
-            )
-        )
+        response = {
+            "_dt": datetime.now(),
+            "method": method,
+            "path": parts.path,
+            "params": parts.params,
+            "query": parse_qs(parts.query),
+            "fragment": parts.fragment,
+            "headers": self.headers.items(),
+            "body": content.read() if Sayrver.rawbody else b"",
+        }
+        puts(pformat(response))
 
         if not Sayrver.rawbody and length:
             match self.headers.get("Content-Type", "").split(";")[0].strip():
                 case "application/json":
                     puts(pformat(load(content)))
                 case "application/x-www-form-urlencoded":
-                    puts(
-                        pformat(
-                            [
-                                tuple(map(bytes.decode, pair.split(b"=")))
-                                for pair in content.read().split(b"&")
-                            ]
-                        )
-                    )
+                    ls = [
+                        pair.partition(b"=")
+                        for pair in content.read().split(b"&")
+                    ]
+                    puts(pformat(ls))
                 case (
                     "application/x-httpd-php"
                     | "application/x-sh"
@@ -115,10 +110,11 @@ class Sayrver(BaseHTTPRequestHandler):
                 case _:
                     puts(f"{pformat(content.read(120))} # (total {length}B)")
 
-        self.send_response(200)
-        self.send_header("Content-Type", Sayrver.reply[0])
+        mime, code, content = Sayrver.reply
+        self.send_response(code)
+        self.send_header("Content-Type", mime)
         self.end_headers()
-        self.wfile.write(Sayrver.reply[1])
+        self.wfile.write(content)
 
         puts(Sayrver.separator)
         stdout.flush()
@@ -133,20 +129,24 @@ def parsereply(usr: str):
 
     type, found, text = usr.partition(":")
     if not found:
-        return print("no mime type, repl unchanged", file=stderr)
+        return print("no mime type, reply unchanged", file=stderr)
+
+    type, found, code = type.partition("(")
+    if found and not code[:-1].isdigit():
+        return print("broken status code, reply unchanged", file=stderr)
 
     if "file" == type:
         try:
             with open(text, "rb") as file:
                 content = file.read()
         except FileNotFoundError:
-            return print(f"no file {text!r}, repl unchanged", file=stderr)
+            return print(f"no file {text!r}, reply unchanged", file=stderr)
         _, _, type = text.rpartition(".")
     else:
         content = text.encode()
 
     mime = type if "/" in type else MIME.get(type, "text/plain")
-    return mime, content
+    return mime, int(code[:-1] or 200), content
 
 
 def main():
@@ -178,8 +178,15 @@ def main():
             ).serve_forever()
 
         except KeyboardInterrupt:
-            print(f"urrent reply ({Sayrver.reply[0]}):", file=stderr)
-            print(colo(pformat(Sayrver.reply[1])), file=stderr)
+            mime, code, content = Sayrver.reply
+            print(f"urrent reply {mime}({code}):", file=stderr)
+            presentable = (
+                (pair.partition(b"=") for pair in content.split(b"&"))
+                if "application/x-www-form-urlencoded" == mime
+                else loads(content) if "application/json" == mime else content
+            )
+            print(colo(pformat(presentable)), file=stderr)
+
             print("new reply (empty to keep): ", end="", file=stderr)
             try:
                 usr = input()

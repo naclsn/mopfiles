@@ -5,12 +5,14 @@ Usage::
     ...
     breakpoint()
 
-Here is an alternative one-line to use with FIFOs::
-    import sys;s=vars(sys);b="breakpointhook";s[b]=lambda:s.update(s[n].close()or(n,open("/tmp/"+n,s[n].mode))for n in("stdin","stdout"))or s[f"__{b}__"]()
+    $ rlwrap nc localhost 4099
 
-    mkfifo /tmp/stdin /tmp/stdout
-    </tmp/stdout cat & cat >/tmp/stdin
+Here is an alternative one-line to use with FIFOs::
+    import sys;s=vars(sys);b="breakpointhook";f="stdin","stdout","stderr";s[b]=lambda:s.update({n:open("/tmp/"+n,s[n].mode)for n in f})or s[f"__{b}__"]()or s.update({n:s[n].close()or s[f"__{n}__"]for n in f+(b,)})
+
+    $ mkfifo /tmp/stdin /tmp/stdout /tmp/stderr && </tmp/stdout cat /tmp/stderr & cat >/tmp/stdin
 """
+
 
 __all__ = ["config", "set_trace", "socket", "sys"]
 
