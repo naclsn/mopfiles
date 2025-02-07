@@ -87,6 +87,7 @@ class CameraGroup(pyglet.graphics.Group):
 
     @override
     def set_state(self):
+        # no `pyglet.gl.glPushMatrix` & co anymore, so here's the hack around
         win = next(win for win in pyglet.app.windows if win.context is pyglet.gl.current_context)
         assert isinstance(win, pyglet.window.Window)
         self.win = win
