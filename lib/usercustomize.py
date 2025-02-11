@@ -33,4 +33,4 @@ for k, v in list(locals().items()):
 
 import sys, pdb
 
-sys.excepthook = lambda *_: pdb.pm()
+sys.excepthook = lambda *_: sys.__excepthook__(*_) or pdb.pm()

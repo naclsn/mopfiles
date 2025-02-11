@@ -36,44 +36,54 @@ import sys
 
 
 # API {{{1
-__all__ = ["initrrepl", "trrepl"]
+__all__ = ["acceptrrepl", "initrrepl", "trrepl"]
+
+
+from types import FrameType
+
+
+def acceptrrepl(
+    frame: "FrameType | None" = None,
+    settings: "trrepl.Settings | None" = None,
+):
+    """Accept incoming connection now.
+
+    If the frame is not specified, latch onto the last one akin to
+    `pdb.set_trace`. This is of course non blocking.
+    """
+    from threading import Thread
+
+    if not settings:
+        settings = trrepl.Settings()
+
+    args = trrepl.Settings(**vars(settings)), frame or sys._getframe().f_back
+    Thread(target=trrepl, args=args).start()
+
+
+del FrameType
 
 
 def initrrepl(
-    *,
     save_pid_to_file: "str | None" = None,
     settings: "trrepl.Settings | None" = None,
 ):
-    """
-    Setup signal handling (SIGUSR1).
+    """Setup signal handling (SIGUSR1).
 
     If `save_pid_to_file` is given, saves the pid to the given file. Use
     `settings` to change some of the initial values (see `trrepl.Settings`).
     """
     from os import getpid
-    from threading import Thread
     from signal import SIGUSR1, signal
 
     if save_pid_to_file:
         with open(save_pid_to_file, "w") as pid:
             print(getpid(), file=pid)
 
-    if not settings:
-        settings = trrepl.Settings()
-
-    signal(
-        SIGUSR1,
-        lambda _, f: Thread(
-            target=trrepl,
-            args=(trrepl.Settings(**vars(settings)), f),
-        ).start(),
-    )
+    signal(SIGUSR1, lambda _, frame: acceptrrepl(frame, settings))
 
 
 class trrepl:
-    """
-    TODO: docstring with use as help(__) in mind
-    """
+    """TODO: docstring with use as help(__) in mind"""
 
     from dataclasses import dataclass
     from enum import Enum
@@ -245,14 +255,16 @@ class trrepl:
         for k, frame in enumerate(self._trace):
             self._print(
                 "[curr]" if self._curr == k else "      ",
-                f"{frame.f_code.co_filename}:{frame.f_lineno} " + f"in {frame.f_code.co_name}",
+                f"{frame.f_code.co_filename}:{frame.f_lineno} "
+                + f"in {frame.f_code.co_name}",
             )
 
     def frame(self, n: int = 0):
         """set current frame to (absolute) nth; 0 is top, -1 would be bottom"""
         frame = self._trace[n]
         self._print(
-            f"[curr] {frame.f_code.co_filename}:{frame.f_lineno} " + f"in {frame.f_code.co_name}"
+            f"[curr] {frame.f_code.co_filename}:{frame.f_lineno} "
+            + f"in {frame.f_code.co_name}"
         )
         locs = (k for k in frame.f_locals.keys() if "_" != k[0])
         self._print(*locs, sep="\t\n")
