@@ -7,6 +7,23 @@ def pp(object: object, *a: ..., **ka: ...):
     return object
 
 
+def vars(object: object, recursively: bool = False):
+    if not recursively:
+        return __vars__(object)
+    if isinstance(object, type):
+        return object
+    if isinstance(object, dict):
+        return dict((k, vars(v)) for k, v in object.items())
+    if isinstance(object, list):
+        return list(vars(e) for e in object)
+    if isinstance(object, tuple):
+        return tuple(vars(e) for e in object)
+    try:
+        return vars({"__class__": type(object)} | __vars__(object))
+    except TypeError:
+        return object
+
+
 def _nformat(r: str, width: int = 0, group: int = 0, /):
     if width:
         r = ("0" * width + r[2:])[-width:]
@@ -19,6 +36,7 @@ def _nformat(r: str, width: int = 0, group: int = 0, /):
 
 
 for _nfunc in ("bin", "oct", "hex"):
+    _nformat
     exec(
         f"""def {_nfunc}(number: int, width: int = 0, group: int = 0, /):
         return _nformat(__{_nfunc}__(number), width, group)"""
