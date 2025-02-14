@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Usage: sayrver [-r] [<addr>]:<port> [<mime>:<data...>]
+Usage: sayrver [-r] [<addr>]:<port> [<mime>(<code>):<data...>]
        defaults to  :8080 plain:hi :3
 
 This is a really small, no dependencies, Python server that
@@ -8,6 +8,7 @@ simply prints out everything from the requests it gets and
 replies with a predetermined reply, for examples:
     * plain:hello world
     * json:{"coucou": 42}
+    * form:q=hello+world+rust  # or urlencoded:
     * file:resp.json
     * plain(418):a teapot I am
 
@@ -40,12 +41,22 @@ from sys import argv, stderr, stdout
 from urllib.parse import parse_qs, urlparse
 
 parse = compile(
-    r'(\'(?:CONNECT|DELETE|GET|HEAD|OPTIONS|PATCH|POST|PUT|TRACE|\d{4}-\d{2}-\d{2}(?:T\d{2}:\d{2}:\d{2}Z?)?|\d{2}:\d{2}:\d{2}Z?|(?:file|https?|ftps?)://.*")\')|([\'"])((?:\\\2|.|\n)*?)\2|(\d+(?:\.\d+)?)|(True|False|Null)|(#.*)'
+    r"(\'(?:CONNECT|DELETE|GET|HEAD|OPTIONS|PATCH|POST|PUT|TRACE"
+    + r"|\d{4}-\d{2}-\d{2}(?:T\d{2}:\d{2}:\d{2}Z?)?|\d{2}:\d{2}:\d{2}Z?"
+    + r'|(?:file|https?|ftps?)://.*")\')'
+    + r'|([\'"])((?:\\\2|.|\n)*?)\2|(\d+(?:\.\d+)?)|(True|False|Null)|(#.*)'
 )
-colo = lambda rpr: parse.sub(
-    "\x1b[36m\\1\x1b[32m\\2\\3\\2\x1b[33m\\4\x1b[34m\\5\x1b[37m\\6\x1b[m", rpr
-)
-puts = lambda txt: print(colo(txt))
+
+
+def colo(rpr: str):
+    parse.sub(
+        "\x1b[36m\\1\x1b[32m\\2\\3\\2\x1b[33m\\4\x1b[34m\\5\x1b[37m\\6\x1b[m",
+        rpr,
+    )
+
+
+def puts(txt: str):
+    print(colo(txt))
 
 
 class Sayrver(BaseHTTPRequestHandler):
@@ -150,13 +161,13 @@ def parsereply(usr: str):
 
 
 def main():
-    if argv and "-r" == argv[0]:
-        argv.pop(0)
-        Sayrver.rawbody = True
-        global puts
-        puts = print
-
-    if not argv:
+    if argv:
+        if "-r" in argv:
+            argv.remove("-r")
+            Sayrver.rawbody = True
+            global puts
+            puts = print
+    else:
         argv.append(":8080")
 
     name, port = argv.pop(0).split(":")
@@ -181,7 +192,7 @@ def main():
             mime, code, content = Sayrver.reply
             print(f"urrent reply {mime}({code}):", file=stderr)
             presentable = (
-                (pair.partition(b"=") for pair in content.split(b"&"))
+                [pair.partition(b"=") for pair in content.split(b"&")]
                 if "application/x-www-form-urlencoded" == mime
                 else loads(content) if "application/json" == mime else content
             )
@@ -222,9 +233,11 @@ MIME = {
     "css": "text/css",
     "csv": "text/csv",
     "doc": "application/msword",
-    "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "docx": "application/vnd.openxmlformats-officedocument"
+    + ".wordprocessingml.document",
     "eot": "application/vnd.ms-fontobject",
     "epub": "application/epub+zip",
+    "form": "application/x-www-form-urlencoded",
     "gif": "image/gif",
     "gz": "application/gzip",
     "htm": "text/html",
@@ -257,7 +270,8 @@ MIME = {
     "plain": "text/plain",
     "png": "image/png",
     "ppt": "application/vnd.ms-powerpoint",
-    "pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    "pptx": "application/vnd.openxmlformats-officedocument"
+    + ".presentationml.presentation",
     "rar": "application/vnd.rar",
     "rtf": "application/rtf",
     "sh": "application/x-sh",
@@ -278,7 +292,8 @@ MIME = {
     "woff2": "font/woff2",
     "xhtml": "application/xhtml+xml",
     "xls": "application/vnd.ms-excel",
-    "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "xlsx": "application/vnd.openxmlformats-officedocument"
+    + ".spreadsheetml.sheet",
     "xml": "application/xml",
     "xul": "application/vnd.mozilla.xul+xml",
     "zip": "application/zip",
