@@ -15,26 +15,23 @@ def pp(object: object, *a: ..., name: str = '_', **ka: ...):
     return object
 
 
-def vars(object: object, rec: bool = False) -> object:
-    if not rec:
-        return __vars__(object)
+def vv(object: object) -> object:
     if isinstance(object, type):
         return object
     if isinstance(object, dict):
-        return dict((k, vars(v, rec)) for k, v in object.items())
+        return dict((k, vv(v)) for k, v in object.items())
     if isinstance(object, list):
-        return list(vars(e, rec) for e in object)
+        return list(vv(e) for e in object)
     if isinstance(object, tuple):
-        return tuple(vars(e, rec) for e in object)
+        return tuple(vv(e) for e in object)
     if isinstance(object, set):
-        return set(vars(e, rec) for e in object)
+        return set(vv(e) for e in object)
     if isinstance(object, frozenset):
-        return frozenset(vars(e, rec) for e in object)
+        return frozenset(vv(e) for e in object)
     if isinstance(object, slice):
-        sss = object.start, object.stop, object.step
-        return slice(*(vars(e, rec) for e in sss))
+        return slice(vv(object.start), vv(object.stop), vv(object.step))
     try:
-        return {"__class__": type(object), **vars(__vars__(object), rec)}
+        return {"__class__": type(object), **vv(vars(object))}
     except TypeError:
         return object
 
@@ -65,6 +62,6 @@ for k, v in list(locals().items()):
             __builtins__[f"__{k}__"] = o
         __builtins__[k] = v
 
-import sys, pdb
+import sys, pdb, bdb
 
-sys.excepthook = lambda *_: sys.__excepthook__(*_) or pdb.pm()
+sys.excepthook = lambda ty, val, bt: sys.__excepthook__(ty, val, bt) or ty in {pdb.Restart, bdb.BdbQuit} or pdb.pm()
