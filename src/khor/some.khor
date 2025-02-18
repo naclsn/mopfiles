@@ -1,0 +1,10 @@
+(rules function
+       ($name $args end) ()
+       ($name $args $body+ $return end) ())
+
+(
+  function hellow(name)
+    (display (.. "hello " name ", how you?"))
+    (display "me find, thanks you")
+  end
+)

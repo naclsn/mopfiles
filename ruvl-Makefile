@@ -1,0 +1,10 @@
+warnings := -Wall -Wextra -Wpedantic -Werror -Wno-unused-variable
+override CFLAGS += -ggdb -O1 -std=c99 $(warnings)
+
+LDFLAGS-ruvl := -lglfw -lGL -lepoxy -lm
+
+build/playground: playground.c ruvl.h; $(CC) $< -o $@ $(CFLAGS) $(LDFLAGS-ruvl)
+build/ruvl-lua: ruvl-lua.c ruvl.h; $(CC) $< -o $@ $(CFLAGS) $(LDFLAGS-ruvl) -llua -ldl -lreadline -pthread
+
+
+build/spaaace: spaaace.c ruvl.h; $(CC) $< -o $@ $(CFLAGS) $(LDFLAGS-ruvl)

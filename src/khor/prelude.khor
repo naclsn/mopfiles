@@ -1,0 +1,34 @@
+(rules not! ($o) (if $o () 1))
+
+(rules and!
+       ($o) $o
+       ($h $t+) (if $h (and! $t+) ()))
+(rules or!
+       ($o) $o
+       ;($h $t+) (if $h $h (or! $t+))
+       ($h $t+) (_or $h (or! $t+)))
+(define __or (lambda (a b) (if a a b)))
+
+(rules cond
+       ($hc $hv)        (cond $hc $hv ())
+       ($hc $hv $o)     (if $hc $hv $o)
+       ($hc $hv $o $t+) (if $hc $hv (cond $o $t+)))
+
+(rules halta ($f $a*) (halt ($f $a*)))
+
+(rules defun ($name $args $body+)
+       (define $name
+         (lambda $args
+           (progn $body+))))
+
+; (define main
+;   (lambda (args)
+;     (progn
+;       (display "what's the name?")
+;       (display (.. "hi " (read) "! :3"))
+;       742)))
+
+; (defun main (args)
+;   (display "what's the name?")
+;   (display (.. "hi " (read) "! :3"))
+;   742)
