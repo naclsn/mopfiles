@@ -6,7 +6,7 @@ fini "'
 set -e
 
 mkfifo /tmp/jpp
-trap 'rm /tmp/jpp' EXIT
+trap 'rm /tmp/jpp' INT
 
 while jq --sort-keys --color-output . /tmp/jpp
   do echo === `date +%FT%T`

@@ -49,7 +49,7 @@ parse = compile(
 
 
 def colo(rpr: str):
-    parse.sub(
+    return parse.sub(
         "\x1b[36m\\1\x1b[32m\\2\\3\\2\x1b[33m\\4\x1b[34m\\5\x1b[37m\\6\x1b[m",
         rpr,
     )
@@ -209,7 +209,8 @@ def main():
 
             newreply = parsereply(usr)
             if newreply:
-                Sayrver.reply = newreply
+                mime, code, _ = Sayrver.reply = newreply
+                print(f"reply set -- {mime}({code})", file=stderr)
     puts("]")
 
 
@@ -301,3 +302,4 @@ MIME = {
 
 argv.pop(0)
 print(__doc__, file=stderr) if "-h" in argv else main()
+# vim: se tw=78:
