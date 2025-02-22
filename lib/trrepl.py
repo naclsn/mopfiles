@@ -30,6 +30,11 @@ TODO/FIXME:
 * accessing other thread, also async stuff (could be cool)
 * locals situation, it needs to behave as expectable
 * enable more socket types (eg. unix-domain)
+
+Note:
+    i=__import__
+    def r(l={},v=i('socket').socket()):v.bind(('localhost',4099));v.listen(1);c,_=v.accept();z=c.makefile('rw');{(z.write(f'{eval(d,{},l)}\n'),z.flush())for d in iter(z.readline,'')};z.close();c.close();r()
+    i('threading').Thread(None,r).start()
 """
 
 import sys

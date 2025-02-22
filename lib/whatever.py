@@ -1,74 +1,10 @@
-from pprint import pprint, pformat
-import sys
-
-try:
-    sys.tty = open("/dev/tty", "w")  # can't rw because python
-    __import__("atexit").register(sys.tty.close)
-except:
-    pass
-
-
-def interact(locals: "dict[str, object]", hist: str = "/tmp/interact.hist"):
-    """Make a Python REPL here and now"""
-
-    try:
-        import readline
-
-        try:
-            import rlcompleter as _
-
-            readline.parse_and_bind("tab: complete")
-        except ImportError:
-            pass
-
-        with open(hist, "a"):
-            pass
-        readline.read_history_file(hist)
-        import atexit
-
-        atexit.register(readline.write_history_file, hist)
-    except ImportError:
-        pass
-
-    import os
-
-    sup = os.getenv("PYTHONSTARTUP")
-    if sup is not None:
-        with open(sup) as f:
-            exec(f.read(), locals, locals)
-
-    import code
-
-    code.interact(local=locals)
-
-
-def callchain() -> str:
-    import inspect
-
-    def method(info: inspect.FrameInfo) -> str:
-        fn = info.function
-        locs = info.frame.f_locals
-        return (
-            f'"{type(locs["self"]).__name__}.{fn}"'
-            if "self" in locs
-            else f'"{fn}"'
-        )
-
-    return " -> ".join(map(method, reversed(inspect.stack())))
-
-
 class whatever:
     """Print whatever is done to itself"""
 
     _instances: "dict[int, str]" = {}
 
-    print = (
-        __builtins__["print"]
-        if isinstance(__builtins__, dict)
-        else __builtins__.print
-    )
+    from builtins import print
     from pprint import pprint
-    from sys import stdout
 
     def __init__(self, tag: str):
         whatever._instances[id(self)] = tag
