@@ -1,111 +1,77 @@
-from pyglet.math import Vec2, Vec3
-from pyglet.window import key
-import math
-import pyglet
+from pyglet import *
+from typing import TypedDict
+from colorsys import hsv_to_rgb
 
-from typing import TYPE_CHECKING
+# timepoints series assumed sorted
+data = {
+    "hello": [1.0, 3.0, 6.0],
+    "what": [2.0, 3.0, 8.0],
+    "doin": [1.5, 2.5, 8.5, 9.0],
+}
 
-if TYPE_CHECKING:
-    from typing import override
-else:
-    override = lambda m, /: m
+win = window.Window(720, 480, resizable=True, caption="hi :3")
+batch = graphics.Batch()
 
 
-class Line:
-    HEIGHT = 20
+class Baba(TypedDict):
+    index: int
+    label: str
+    color: tuple[int, int, int]
+    timepoints: list[float]
+    textlabel: text.Label
+    polygon: shapes.Polygon
 
-    def __init__(
-        self,
-        parent: "Timelines",
-        index: int,  # ie baseline vertical placement
-        tag: str,
-        timepoints: "list[float]",
-        batch: "pyglet.graphics.Batch | None" = None,
-        group: "pyglet.graphics.Group | None" = None,
-    ):
-        self.label = pyglet.text.Label(
-            f"{tag} ({len(timepoints)} points)",
-            0,
-            parent.x + index * Line.HEIGHT,
-            font_name="monospace",
-            font_size=16,
-            anchor_x="center",
+
+LINE_THICK = 36
+LINE_LENGTH = max(l[-1] for l in data.values())
+
+
+def line(index: int, label: str, timepoints: list[float]):
+    rf, gf, bf = hsv_to_rgb(hash(label) % 360 / 360, 1, 1)
+    color = (int(rf * 255), int(gf * 255), int(bf * 255))
+
+    #ymid = (index + 0.5) * LINE_THICK
+    #ymax = ymid + LINE_THICK / 2.5
+    #ymin = ymid - LINE_THICK / 2.5
+    ymin = (index + 0.2) * LINE_THICK
+    ymax = ymin + 0.6 * LINE_THICK
+
+    return Baba(
+        index=index,
+        label=label,
+        timepoints=timepoints,
+        color=color,
+        textlabel=text.Label(
+            f"{label} ({len(timepoints)} points)",
+            font_size=LINE_THICK / 2,
+            x=0,
+            y=ymid,
+            anchor_x="left",
             anchor_y="center",
+            color=color,
             batch=batch,
-            group=group,
-        )
+        ),
+        polygon=shapes.Polygon(
+            *(
+                (0, ymin),
+                (win.width / 2, ymax),
+                (win.width, ymid),
+                (win.width / 2, ymin),
+            ),
+            color=color,
+            # group=polygon_group,
+            batch=batch,
+        ),
+    )
 
 
-class Timelines(pyglet.gui.WidgetBase):
-    def __init__(
-        self,
-        x: int,
-        y: int,
-        width: int,
-        height: int,
-        batch: "pyglet.graphics.Batch | None" = None,
-        group: "pyglet.graphics.Group | None" = None,
-    ):
-        super().__init__(x, y, width, height)
-
-        self.time = 0
-        self.drag_dist = 0
-
-        bidoof = [
-            ("a", [1.0, 3.0, 6.0]),
-            ("b", [2.0, 3.0, 8.0]),
-        ]
-        self.lines = {
-            tag: Line(self, k, tag, points, batch=batch, group=group)
-            for k, (tag, points) in enumerate(bidoof)
-        }
-
-        self._set_enabled(self._enabled)
-
-    # {{{ events
-    # TODO(multiple below): self._check_hit, and is there a concept of focused?
-
-    @override
-    def on_mouse_press(self, x: int, y: int, buttons: int, modifiers: int):
-        self.press_at = self.time
-        self.drag_dist = 0
-
-    @override
-    def on_mouse_release(self, x: int, y: int, buttons: int, modifiers: int):
-        if 1 < self.time - self.press_at or 50 < self.drag_dist:
-            return
-
-        print("click")
-
-    @override
-    def on_mouse_drag(self, x: int, y: int, dx: int, dy: int, buttons: int, modifiers: int):
-        self.drag_dist += dx * dx + dy * dy
-        if 50 < self.drag_dist:
-            print("drag")
-
-    @override
-    def on_mouse_scroll(self, x: int, y: int, scroll_x: float, scroll_y: float):
-        if scroll_y:
-            print("scroll")
-
-    # }}}
+hold = {item[0]: line(index, *item) for index, item in enumerate(data.items())}
 
 
-class App(pyglet.window.Window):
-    def __init__(self):
-        super().__init__(720, 480, resizable=True, caption="hi :3")
-        self.batch = pyglet.graphics.Batch()
-        self.lines = Timelines(0, 0, 720, 480, batch=self.batch)
-        self.push_handlers(self.lines)
-
-    @override
-    def on_draw(self):
-        self.clear()
-        self.batch.draw()
+@win.event
+def on_draw():
+    win.clear()
+    batch.draw()
 
 
-if __name__ == "__main__":
-    app = App()
-    pyglet.app.run()
-
-# vim: se tw=99:
+app.run()
