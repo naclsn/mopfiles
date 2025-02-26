@@ -1,0 +1,39 @@
+# achievements
+
+## teach-y ones
+
+    grep
+        use the complete form g/re/p
+    ...
+        combine g/re/y with upper-case register
+    hex editor
+        xxd, edit, xxd-r
+    -q
+        start with -q
+    stuck in vim, ladida, st%u
+        quit w/o using an ex command or mapping
+    dry
+        no 2 same normal commands in a row for [n]
+
+## difficult/useless ones
+
+    I'm only a normal dev
+        [edit session] using only normal (and operator pending)
+        ie no visual/insert/replace/command
+    I'm only an ex-dev
+        [edit session] in ex mode only
+    where was I?
+        -S a 1 month old session
+    we need to go further beyond
+        2 or more recursion level complex-repeat
+    spell it out
+        [edit session] fully spelling out [n] ex commands
+        could be restricted to a annoying set like :substitute, :global, :print
+        and/or extended to requiring the last / or ?, :set options and more
+        could be for a given set of things that are usually shortened, must do 1 of each, count them
+    ...
+        100 buffers at once doesn't seem like a lot..
+    :hi!
+        :hi!
+    in control
+        [n] CTRL-. different in a row
