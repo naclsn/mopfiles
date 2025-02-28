@@ -1,17 +1,18 @@
-from pprint import pprint as _pprint
+__all__ = ("pp", "vv", "bin", "oct", "hex")
+import bdb, io, pdb, sys
 
 
-def pp(object: object, *a: ..., name: str = '_', **ka: ...):
-    ka = (
-        {}
-        if sys.version_info < (3, 8)
-        else {"compact": 1, "sort_dicts": 0, "underscore_numbers": 1, **ka}
-    )
-    if a and str == type(a[0]):
-        name, *a = a
-    if name:
-        print(name, '=', end=' ')
-    _pprint(object, *a, **ka)
+def pp(object: object, name: str = "_", to: "io.TextIOBase | str" = sys.__stderr__, color: bool = True):
+    from pprint import pprint as _pprint
+    ka = {k: not v for k, v in _pprint.__kwdefaults__.items() if type(v) is bool}
+
+    if isinstance(to, str):
+        with open(to, "a") as to:
+            name and print(name, "=", end=" ", file=to)
+            _pprint(object, to, **ka)
+    else:
+        name and print(name, "=", end=" ", file=to)
+        _pprint(object, to, **ka)
     return object
 
 
@@ -37,16 +38,12 @@ def vv(object: object) -> object:
 
 
 def _nformat(r: str, width: int = 0, group: int = 0):
-    if width:
-        r = r[2:].zfill(width)
-    if not group:
-        return r
+    if width: r = r[2:].zfill(width)
+    if not group: return r
     l = [r[k - group : k] for k in range(len(r), group - 1, -group)]
     r = r[: len(r) % group]
-    if r:
-        l.append(r)
+    r and l.append(r)
     return "_".join(reversed(l))
-
 
 for _nfunc in ("bin", "oct", "hex"):
     _nformat
@@ -55,13 +52,11 @@ for _nfunc in ("bin", "oct", "hex"):
         return _nformat(__{_nfunc}__(number), width, group)"""
     )
 
-for k, v in list(locals().items()):
-    if "_" != k[0]:
-        o = __builtins__.get(k)
-        if o:
-            __builtins__[f"__{k}__"] = o
-        __builtins__[k] = v
 
-import sys, pdb, bdb
+for k in __all__:
+    o = __builtins__.get(k)
+    if o: __builtins__[f"__{k}__"] = o
+    __builtins__[k] = locals()[k]
+
 
 sys.excepthook = lambda ty, val, bt: sys.__excepthook__(ty, val, bt) or ty in {pdb.Restart, bdb.BdbQuit} or pdb.pm()
