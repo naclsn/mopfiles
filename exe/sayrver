@@ -11,6 +11,7 @@ replies with a predetermined reply, for examples:
     * form:q=hello+world+rust  # or urlencoded:
     * file:resp.json
     * plain(418):a teapot I am
+    * file(200,slow):big.txt
 
 Change the reply while running with ^C once. Twice exits.
 Example of using '-r' to stash and replay:
@@ -37,8 +38,14 @@ from io import IOBase
 from json import load, loads
 from pprint import pformat
 from re import compile
-from sys import argv, stderr, stdout
+from sys import argv, stderr
+from time import sleep
 from urllib.parse import parse_qs, urlparse
+
+try:
+    import readline as _
+except:
+    pass
 
 parse = compile(
     r"(\'(?:CONNECT|DELETE|GET|HEAD|OPTIONS|PATCH|POST|PUT|TRACE"
@@ -56,11 +63,16 @@ def colo(rpr: str):
 
 
 def puts(txt: str):
-    print(colo(txt))
+    print(colo(txt), flush=True)
 
 
 class Sayrver(BaseHTTPRequestHandler):
-    reply: "tuple[str, int, bytes]" = ("text/plain", 200, b"hi :3")
+    reply: "tuple[str, int, list[str], bytes]" = (
+        "text/plain",
+        200,
+        [],
+        b"hi :3",
+    )
     rawbody = False
     separator = ",  # ==="
 
@@ -121,14 +133,20 @@ class Sayrver(BaseHTTPRequestHandler):
                 case _:
                     puts(f"{pformat(content.read(120))} # (total {length}B)")
 
-        mime, code, content = Sayrver.reply
+        mime, code, flags, content = Sayrver.reply
         self.send_response(code)
         self.send_header("Content-Type", mime)
+        self.send_header("Content-Length", str(len(content)))
         self.end_headers()
-        self.wfile.write(content)
+
+        if "slow" in flags:
+            for k in range(0, len(content), 10):
+                self.wfile.write(content[k : k + 10])
+                sleep(0.01)
+        else:
+            self.wfile.write(content)
 
         puts(Sayrver.separator)
-        stdout.flush()
 
     for it in "DELETE GET HEAD POST PUT".split():
         exec(f"def do_{it}(self): self._do('{it}')")
@@ -143,7 +161,8 @@ def parsereply(usr: str):
         return print("no mime type, reply unchanged", file=stderr)
 
     type, found, code = type.partition("(")
-    if found and not code[:-1].isdigit():
+    code, *flags = code[:-1].split(",")
+    if found and not code.isdigit():
         return print("broken status code, reply unchanged", file=stderr)
 
     if "file" == type:
@@ -157,7 +176,7 @@ def parsereply(usr: str):
         content = text.encode()
 
     mime = type if "/" in type else MIME.get(type, "text/plain")
-    return mime, int(code[:-1] or 200), content
+    return mime, int(code or 200), flags, content
 
 
 def main():
@@ -166,7 +185,7 @@ def main():
             argv.remove("-r")
             Sayrver.rawbody = True
             global puts
-            puts = print
+            puts = lambda txt: print(txt, flush=True)
     else:
         argv.append(":8080")
 
@@ -189,8 +208,9 @@ def main():
             ).serve_forever()
 
         except KeyboardInterrupt:
-            mime, code, content = Sayrver.reply
-            print(f"urrent reply {mime}({code}):", file=stderr)
+            mime, code, flags, content = Sayrver.reply
+            flags = flags = f",{','.join(flags)}" if flags else ""
+            print(f"urrent reply {mime}({code}{flags}):", file=stderr)
             presentable = (
                 [pair.partition(b"=") for pair in content.split(b"&")]
                 if "application/x-www-form-urlencoded" == mime
@@ -198,7 +218,7 @@ def main():
             )
             print(colo(pformat(presentable)), file=stderr)
 
-            print("new reply (empty to keep): ", end="", file=stderr)
+            print("new reply (empty to keep):", file=stderr)
             try:
                 usr = input()
             except EOFError:
@@ -207,10 +227,14 @@ def main():
                 print("aca", file=stderr)
                 break
 
-            newreply = parsereply(usr)
-            if newreply:
-                mime, code, _ = Sayrver.reply = newreply
-                print(f"reply set -- {mime}({code})", file=stderr)
+            try:
+                newreply = parsereply(usr)
+                if newreply:
+                    mime, code, _, _ = Sayrver.reply = newreply
+                    print(f"reply set -- {mime}({code})", file=stderr)
+            except BaseException as e:
+                print(e, file=stderr)
+                continue
     puts("]")
 
 
