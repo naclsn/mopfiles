@@ -1,4 +1,4 @@
-"""Socket DB
+"""Socket debug
 
 Usage::
     import sdb; sdb.config(...)
@@ -10,7 +10,8 @@ Usage::
 Here is an alternative one-line to use with FIFOs::
     import sys;s=vars(sys);b="breakpointhook";f="stdin","stdout","stderr";s[b]=lambda:s.update({n:open("/tmp/"+n,s[n].mode)for n in f})or s[f"__{b}__"]()or s.update({n:s[n].close()or s[f"__{n}__"]for n in f+(b,)})
 
-    $ mkfifo /tmp/stdin /tmp/stdout /tmp/stderr && </tmp/stdout cat /tmp/stderr & cat >/tmp/stdin
+    $ mkfifo /tmp/std{in,out,err}
+    $ cat /tmp/stdout & cat /tmp/stderr & >/tmp/stdin python -c 'while 1:import readline;print(input("(Pdb) "))'
 """
 
 
@@ -63,10 +64,10 @@ def set_trace(*a: ..., **ka: ...):
     io = conn.makefile("rw")
     conn.close()
 
-    stdio = sys.stdin, sys.stdout
-    sys.stdin = sys.stdout = io
+    stdio = sys.stdin, sys.stdout, sys.stderr
+    sys.stdin = sys.stdout = sys.stderr = io
     try:
         return sys.__breakpointhook__(*a, **ka)
     finally:
-        sys.stdin, sys.stdout = stdio
+        sys.stdin, sys.stdout, sys.stderr = stdio
         io.close()
