@@ -1,8 +1,8 @@
 __all__ = ("pp", "vv", "bin", "oct", "hex")
-import bdb, io, pdb, sys
+import bdb, io, pdb, subprocess, sys
 
 
-def pp(object: object, name: str = "_", to: "io.TextIOBase | str" = sys.__stderr__, color: bool = True):
+def pp(object: object, name: str = "_", to: "io.TextIOBase | str" = sys.__stderr__):
     from pprint import pprint as _pprint
     ka = {k: not v for k, v in _pprint.__kwdefaults__.items() if type(v) is bool}
 
@@ -58,5 +58,9 @@ for k in __all__:
     if o: __builtins__[f"__{k}__"] = o
     __builtins__[k] = locals()[k]
 
+
+pdb.Pdb.do_shell = pdb.Pdb.do_sh = lambda self, arg: print(subprocess.check_output(arg, shell=True).decode(), file=self.stdout, end='')
+pdb.Pdb.do_frame = pdb.Pdb.do_f = lambda self, arg: self._select_frame(int(arg) if arg else self.curindex)
+pdb.Pdb.do_ed = lambda self, _: subprocess.call("${EDITOR:-ex} '" + self.canonic(self.curframe.f_code.co_filename).replace("'", "'\\''") + f"' +{self.lineno or self.curframe.f_lineno}", shell=True)
 
 sys.excepthook = lambda ty, val, bt: sys.__excepthook__(ty, val, bt) or ty in {pdb.Restart, bdb.BdbQuit} or pdb.pm()
