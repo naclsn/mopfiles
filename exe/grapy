@@ -1,0 +1,142 @@
+#!/usr/bin/env python
+import argparse
+import ast
+import sys
+import typing
+
+if sys.version_info < (3, 10):
+    exit(1)
+
+funky_ = ast.AsyncFunctionDef | ast.FunctionDef
+scoppy_ = funky_ | ast.ClassDef
+
+
+class Spoec:
+    def __init__(self, name: str, names: set[scoppy_]):
+        self.name = name
+        # arg `names` unused, is parent scope names;
+        # would be used if f"{name}."-prefixing ig
+        self.names = set[scoppy_]()  # names
+        self._calls = set[str]()
+        self._bases = set[str]()
+        self.children = list[Spoec]()
+
+    def add(self, idk: scoppy_):
+        if not idk in self.names:
+            self.names.add(idk)
+
+    def call(self, name: str):
+        if not name in self._calls:
+            self._calls.add(name)
+
+    def base(self, name: str):
+        if not name in self._bases:
+            self._bases.add(name)
+
+    def lines(self, ignore: set[str]) -> list[str]:
+        r = list[str]()
+
+        for it in self.names:
+            kind = "fn" if isinstance(it, funky_) else "class"
+            r.append(f"{it.name} [_kind={kind}]")
+
+        for it in self._bases:
+            if it not in ignore:
+                r.append(f"{self.name} -> {it} [_kind=inherit]")
+
+        for it in self._calls:
+            if it not in ignore:
+                r.append(f"{self.name} -> {it}")
+
+        return r
+
+
+def prout(idk: ast.AST, scope: Spoec) -> typing.TypeGuard[scoppy_]:
+    if isinstance(idk, scoppy_):
+        scope.add(idk)
+        return True
+
+    for key in getattr(type(idk), "__match_args__", ()):
+        val: list[ast.AST] | ast.AST | None = getattr(idk, key, None)
+        if isinstance(val, ast.AST):
+            val = [val]
+        if isinstance(val, list):
+            {prout(it, scope) for it in val}
+
+    match idk:
+        case ast.Call(ast.Name(id) | ast.Attribute(_, attr=id)):
+            scope.call(id)
+        case _:
+            pass
+
+    return False
+
+
+def bidoof(body: list[ast.stmt], parent: Spoec):
+    for name, it in {it.name: it for it in body if prout(it, parent)}.items():
+        child = Spoec(name, {*parent.names})
+        parent.children.append(child)
+
+        if isinstance(it, funky_):
+            {prout(it, child) for it in it.args.defaults}
+            {prout(it, child) for it in it.args.kw_defaults if it}
+        else:
+            {
+                child.base(it.id) if isinstance(it, ast.Name) else prout(it, child)
+                for it in it.bases
+            }
+            {prout(it.value, child) for it in it.keywords}
+
+        bidoof(it.body, child)
+
+
+def farts(sac: Spoec, inde: str, ignore: set[str]) -> list[str]:
+    r = [inde + it for it in sac.lines(ignore)]
+    for it in sac.children:
+        if baba := farts(it, inde + "    ", ignore):
+            r.append(inde + "{ // " + it.name)
+            r.extend(baba)
+            r.append(inde + "}")
+    return r
+
+
+def main():
+    parse = argparse.ArgumentParser()
+    parse.add_argument("file", type=argparse.FileType())
+    parse.add_argument("-x", action="store_true")
+    parse.add_argument(
+        "-i",
+        type=lambda s: set(s.split(",")),
+        default=set(eval('__builtins__', {}).keys()),
+    )
+    opts = parse.parse_args()
+
+    source = str([opts.file.read(), opts.file.close()][0])
+    root = ast.parse(source, filename=opts.file.name)
+
+    sac = Spoec("_", set())
+    bidoof(root.body, sac)
+    txet = f"""digraph {{ // {opts.file.name}
+    rankdir=LR
+{'\n'.join(farts(sac, '    ', opts.i))}
+}}
+"""
+
+    print(txet)
+
+    if opts.x:
+        import gi
+        import xdot
+
+        gi.require_version("Gtk", "3.0")
+        from gi.repository import Gtk
+
+        win = xdot.ui.DotWindow()
+        win.set_dotcode(txet.encode())
+        win.connect("destroy", Gtk.main_quit)
+        win.show()
+        Gtk.main()
+
+
+if "__main__" == __name__:
+    main()
