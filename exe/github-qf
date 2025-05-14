@@ -1,0 +1,41 @@
+#!/usr/bin/env perl
+use strict;
+use warnings;
+use HTTP::Tiny;
+use JSON::PP;
+
+my $pat = ''; # TODO: -H Authorization:Bearer
+
+die <<USAGE unless grep {!/^-h$/} @ARGV;
+Usage: $0 <repo> [<pr>]
+
+    with <repo> like <owner>/<repo>
+     and <pr> a PR number, lists them if absent
+
+USAGE
+
+my $repo = $ARGV[0];
+
+if (@ARGV < 2) {
+    my $res = HTTP::Tiny->new->get("https://api.github.com/repos/$repo/pulls");
+    die "HTTP GET error: $res->{status} $res->{reason}\n" unless $res->{success};
+    my $data = decode_json($res->{content});
+
+    my $lineup_arrw = (sort map {length "$_->{number}  $_->{title}  $_->{head}{ref}"} @$data)[-1];
+    for (@$data) {
+        my $arrw = $lineup_arrw - (length "$_->{number}  $_->{title}  $_->{head}{ref}");
+        printf "$_->{number}: \e[1m$_->{title}\e[m %${arrw}s($_->{head}{ref} -> $_->{base}{ref})\n", ''
+    }
+    exit
+}
+
+my $pr = $ARGV[1];
+
+my $res = HTTP::Tiny->new->get("https://api.github.com/repos/$repo/pulls/$pr/comments");
+die "HTTP GET error: $res->{status} $res->{reason}\n" unless $res->{success};
+my $data = decode_json($res->{content});
+
+for (@$data) {
+    my $range = $_->{start_line} ? "($_->{start_line}-$_->{line}) " : '';
+    print "$_->{path}|$_->{line}| $range$_->{body}\n\n";
+}

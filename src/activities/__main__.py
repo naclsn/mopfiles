@@ -1,3 +1,6 @@
+assert not "done", "matplotlib sucks, change that or away with python"
+
+from matplotlib.dates import DateFormatter
 import argparse
 import json
 import matplotlib.pyplot as plt
@@ -29,17 +32,19 @@ for label, datapoints in data.items():
     width = min(opts.timestep, t_max - t_min)
     plt.bar(time[:-1], hist, label=label, width=width, alpha=0.5)
 
+plt.gca().xaxis.set_major_formatter(DateFormatter("%a (%Y-%m-%d)"))
 plt.gcf().autofmt_xdate()
 plt.tight_layout()
 # plt.legend()
 
-mplcursors.cursor(hover=True).connect(
-    "add",
-    lambda sel: sel.annotation.set(
-        text=sel.artist.get_label(),
-        ha="center",
-        va="bottom",
-    ),
-)
+if 0:
+    mplcursors.cursor(hover=True).connect(
+        "add",
+        lambda sel: sel.annotation.set(
+            text=sel.artist.get_label(),
+            ha="center",
+            va="bottom",
+        ),
+    )
 
 plt.show()
