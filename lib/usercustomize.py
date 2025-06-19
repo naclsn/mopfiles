@@ -9,16 +9,17 @@ _PARSE = re.compile(_SPECIAL + (                       # \1     -> (usecase-spec
                     r'|([\'"])((?:\\\2|.|\n)*?)\2(:)?' # \2\3\2 -> quoted
                     r'|(\d[_\d]*(?:\.\d[_\d]*)?)'      # \4     -> numeral
                     r'|(True|False|None)'              # \5     -> keyword
-                    r'|(#.*)'))                        # \6     -> comment
+                    r'|(Ellipsis|#.*)'))               # \6     -> comment
 _COLOSCHEME = ['\x1b[36m',       # special (cyan)
                '','\x1b[32m','', # quoted (green)
                '\x1b[33m',       # numeral (yellow)
-               '\x1b[34m',       # keyword (blue)
-               '\x1b[37m']       # comment (gray)
+               '\x1b[35m',       # keyword (magenta)
+               '\x1b[37m',       # comment (gray)
+               '\x1b[34m']       # keys (blue)
 def colo(rpr: str) -> str:
-    def rep(m: re.Match[str]) -> str:
+    def rep(m: "re.Match[str]") -> str:
         g = m.groups('')
-        k, r = (2+3*len(g[3]), ''.join(g[1]+g[2]+g[1])) if g[1] else next(p for p in enumerate(g) if p[1])
+        k, r = (2+5*len(g[3]), g[1]+g[2]+g[1]) if g[1] else next(p for p in enumerate(g) if p[1])
         return _COLOSCHEME[k]+r+'\x1b[m'+g[3]
     return _PARSE.sub(rep, rpr)
 
@@ -40,7 +41,7 @@ def vv(object: object, limit: int = 3) -> object:
     if isinstance(object, dict):                          return dict((k, vv(v, limit-1)) for k, v in object.items())
     if isinstance(object, (list, tuple, set, frozenset)): return type(object)(vv(e, limit-1) for e in object)
     if isinstance(object, slice):                         return slice(vv(object.start, limit-1), vv(object.stop, limit-1), vv(object.step, limit-1))
-    try:                                                  return {"__class__": type(object), "__dir__": dir(object), **vv(vars(object, limit-1))}
+    try:                                                  return {"__class__": type(object), "__dir__": dir(object), **vv(vars(object), limit-1)}
     except TypeError:                                     return object
 
 def _nformat(r: str, width: int = 0, group: int = 0):

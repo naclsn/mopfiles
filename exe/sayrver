@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Usage: sayrver [-r] [<addr>]:<port> [<mime>(<code>):<data...>]
-       defaults to  :8080 plain:hi :3
+       defaults to  :8080 plain:
 
 This is a really small, no dependencies, Python server that
 simply prints out everything from the requests it gets and
@@ -71,7 +71,7 @@ class Sayrver(BaseHTTPRequestHandler):
         "text/plain",
         200,
         [],
-        b"hi :3",
+        b"",
     )
     rawbody = False
     separator = ",  # ==="
