@@ -4,7 +4,7 @@ import bdb, io, pdb, re, subprocess, sys
 _SPECIAL = ('(\'(?:CONNECT|DELETE|GET|HEAD|OPTIONS|PATCH|POST|PUT|TRACE'
                 r'|\d{4}-\d{2}-\d{2}(?:T\d{2}:\d{2}:\d{2}Z?)?|\d{2}:\d{2}:\d{2}Z?'
                 r'|(?:file|https?|ftps?)://.*'
-            ')\'|<[^>]*.)')
+            ')\'|<(?:[^>]*<[^>]*>[^>]*|[^>]*)>)')
 _PARSE = re.compile(_SPECIAL + (                       # \1     -> (usecase-specific)
                     r'|([\'"])((?:\\\2|.|\n)*?)\2(:)?' # \2\3\2 -> quoted
                     r'|(\d[_\d]*(?:\.\d[_\d]*)?)'      # \4     -> numeral
