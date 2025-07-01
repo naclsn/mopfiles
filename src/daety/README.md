@@ -1,6 +1,12 @@
 Make any terminal app into server/client. Basically
 single-window-single-panel `tmux(1)`, but dumber.
 
+Here's an even dumber version with the tools available:
+```console
+$ sh -c 'mkfifo /tmp/ii /tmp/oo (while :; do cat /tmp/ii; done |script /dev/null >/tmp/oo) &'
+$ stty raw -echo; cat /tmp/oo & cat >/tmp/ii
+```
+
 ### Getting Started
 
 ```console
