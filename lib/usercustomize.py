@@ -1,13 +1,13 @@
-__all__ = ("colo", "pp", "vv", "bin", "oct", "hex")
-import bdb, io, pdb, re, subprocess, sys
+__all__ = ("colo", "pp", "vv", "bin", "oct", "hex", "holdpoint")
+import bdb, io, pdb, re, subprocess, sys, traceback, types
 
 _SPECIAL = ('(\'(?:CONNECT|DELETE|GET|HEAD|OPTIONS|PATCH|POST|PUT|TRACE'
                 r'|\d{4}-\d{2}-\d{2}(?:T\d{2}:\d{2}:\d{2}Z?)?|\d{2}:\d{2}:\d{2}Z?'
                 r'|(?:file|https?|ftps?)://.*'
-            ')\'|<(?:[^>]*<[^>]*>[^>]*|[^>]*)>)')
+            ')\'|<(?:[^>]*<[^>]*>[^>]*|(?:[-=]>|[^>])*)>)')
 _PARSE = re.compile(_SPECIAL + (                       # \1     -> (usecase-specific)
                     r'|([\'"])((?:\\\2|.|\n)*?)\2(:)?' # \2\3\2 -> quoted
-                    r'|(\d[_\d]*(?:\.\d[_\d]*)?)'      # \4     -> numeral
+                    r'|(\d[_\d]*(?:\.\d[_\d]*)?|0x[0-9a-f]+)'      # \4     -> numeral
                     r'|(True|False|None)'              # \5     -> keyword
                     r'|(Ellipsis|#.*)'))               # \6     -> comment
 _COLOSCHEME = ['\x1b[36m',       # special (cyan)
@@ -55,6 +55,13 @@ for _nfunc in {"bin", "oct", "hex"}:
     _nformat
     exec(f"def {_nfunc}(number: int, width: int = 0, group: int = 0) -> str: return _nformat(__{_nfunc}__(number), width, group)")
 
+def holdpoint():
+    next: "types.TracebackType | None" = None
+    for f, lineno in traceback.walk_stack(None):
+        next = types.TracebackType(next, f, 0, lineno)
+    pdb.held_points.append(next)
+pdb.held_points = []
+
 for k in __all__:
     o = __builtins__.get(k)
     if o: __builtins__[f"__{k}__"] = o
@@ -63,4 +70,4 @@ for k in __all__:
 pdb.Pdb.do_shell = pdb.Pdb.do_sh = lambda self, arg: print(subprocess.check_output(arg, shell=True).decode(), file=self.stdout, end='')
 pdb.Pdb.do_frame = pdb.Pdb.do_f = lambda self, arg: self._select_frame(int(arg) if arg else self.curindex)
 pdb.Pdb.do_ed = lambda self, _: subprocess.call("${EDITOR:-ex} '" + self.canonic(self.curframe.f_code.co_filename).replace("'", "'\\''") + f"' +{self.lineno or self.curframe.f_lineno}", shell=True)
-sys.excepthook = lambda ty, val, bt: sys.__excepthook__(ty, val, bt) or ty in {pdb.Restart, bdb.BdbQuit} or pdb.pm()
+sys.excepthook = lambda ty, val, bt: sys.__excepthook__(ty, val, bt) or ty in {pdb.Restart, bdb.BdbQuit} or hasattr(sys, 'ps1') or pdb.pm()
